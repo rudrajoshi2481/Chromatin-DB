@@ -1,0 +1,64 @@
+# ── Python ────────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+develop-eggs/
+dist/
+downloads/
+eggs/
+.eggs/
+lib/
+lib64/
+parts/
+sdist/
+var/
+wheels/
+*.egg-info/
+.installed.cfg
+*.egg
+MANIFEST
+
+# ── Jupyter ───────────────────────────────────────────────────────────
+.ipynb_checkpoints/
+
+# ── Data & Outputs ───────────────────────────────────────────────────
+# Training outputs
+trash/
+checkpoints/
+*.duckdb
+*.faiss
+*.locus_keys.json
+
+# Processed data
+data/processed/
+data/*.duckdb
+data/*.faiss
+
+# Logs
+*.log
+*.json
+
+# ── IDE ────────────────────────────────────────────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+
+# ── OS ────────────────────────────────────────────────────────────────
+.DS_Store
+.DS_Store?
+._*
+.Spotlight-V100
+.Trashes
+ehthumbs.db
+Thumbs.db
+
+# ── Temporary files ───────────────────────────────────────────────────
+*.tmp
+*.temp
+*.bak
+*.backup
