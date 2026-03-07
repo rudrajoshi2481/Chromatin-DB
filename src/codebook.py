@@ -13,7 +13,7 @@ import torch.nn as nn
 import torch.nn.functional as F
 from typing import Tuple
 
-from config import N_CODES, CODE_DIM, EMA_GAMMA, DEAD_THRESHOLD, REVIVAL_INTERVAL, FP_DIM
+from config import N_CODES, CODE_DIM, EMA_GAMMA, DEAD_THRESHOLD, REVIVAL_INTERVAL, FP_DIM, USE_ATTENTION_POOLING
 
 
 class EMAVectorQuantizer(nn.Module):
@@ -55,6 +55,17 @@ class EMAVectorQuantizer(nn.Module):
 
         # Fingerprint projection: 256 → fp_dim (32)
         self.fp_proj = nn.Linear(code_dim, fp_dim)
+
+        # Attention pooling (alternative to mean pooling)
+        self.use_attention_pool = USE_ATTENTION_POOLING
+        if self.use_attention_pool:
+            self.attn_pool = nn.Sequential(
+                nn.Linear(code_dim, code_dim // 2),
+                nn.Tanh(),
+                nn.Linear(code_dim // 2, 1)
+            )
+            # Separate projection for attention-pooled features
+            self.fp_proj_attn = nn.Linear(code_dim, fp_dim)
 
     # ── Forward ────────────────────────────────────────────────────────────────
 
@@ -129,9 +140,21 @@ class EMAVectorQuantizer(nn.Module):
         """
         Extract per-window 32-dim fingerprint for database storage.
         z_e: [B, N, D]  →  [B, fp_dim]
+
+        Uses attention pooling if enabled, otherwise mean pooling.
+        Attention pooling learns which spatial positions matter most.
         """
-        mean_z = z_e.mean(dim=1)             # [B, D]
-        return self.fp_proj(mean_z)          # [B, fp_dim]
+        if self.use_attention_pool:
+            # Attention pooling: learn importance weights per token
+            # z_e: [B, N, D]
+            attn_weights = self.attn_pool(z_e)  # [B, N, 1]
+            attn_weights = F.softmax(attn_weights, dim=1)  # normalize across tokens
+            pooled = (attn_weights * z_e).sum(dim=1)  # [B, D] weighted sum
+            return self.fp_proj_attn(pooled)  # [B, fp_dim]
+        else:
+            # Mean pooling (original)
+            mean_z = z_e.mean(dim=1)  # [B, D]
+            return self.fp_proj(mean_z)  # [B, fp_dim]
 
     def encode_histogram(self, indices: torch.Tensor) -> torch.Tensor:
         """

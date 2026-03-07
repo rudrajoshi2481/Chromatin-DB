@@ -29,6 +29,12 @@ import matplotlib.gridspec as gridspec
 from matplotlib.lines import Line2D
 
 import torch
+from sklearn.preprocessing import normalize as sk_normalize
+try:
+    from sklearn.metrics import silhouette_score as _silhouette_score
+    _HAS_SILHOUETTE = True
+except ImportError:
+    _HAS_SILHOUETTE = False
 
 
 class TrainingDashboard:
@@ -52,8 +58,10 @@ class TrainingDashboard:
         self.val_total:     List[float] = []
         self.val_recon:     List[float] = []
         self.val_vq:        List[float] = []
-        self.boundary_f1:   List[float] = []
         self.compartment_r: List[float] = []
+        self.classifier_acc: List[float] = []
+        self.region_acc:     List[float] = []
+        self.silhouette:     List[float] = []
         self.active_codes:  List[int]   = []
         self.tau_f:         List[float] = []
 
@@ -85,17 +93,19 @@ class TrainingDashboard:
         self.val_total.append(val_metrics.get("total", 0))
         self.val_recon.append(val_metrics.get("recon", 0))
         self.val_vq.append(val_metrics.get("vq", 0))
-        self.boundary_f1.append(val_metrics.get("boundary_f1", 0))
         self.compartment_r.append(val_metrics.get("compartment_r", 0))
+        self.classifier_acc.append(val_metrics.get("classifier_acc", 0))
+        self.region_acc.append(val_metrics.get("region_acc", 0))
+        self.silhouette.append(val_metrics.get("silhouette", 0.0))
         self.active_codes.append(val_metrics.get("active_codes",
                                   train_metrics.get("active_codes", 0)))
         self.tau_f.append(tau_f)
 
         if fp_embeddings is not None and fp_labels is not None:
-            pca_2d = _pca_2d(fp_embeddings)
+            umap_2d = _umap_2d(fp_embeddings)
             self.pca_snapshots.append({
                 "epoch":      epoch,
-                "embeddings": pca_2d.tolist(),
+                "embeddings": umap_2d.tolist(),
                 "labels":     fp_labels,
             })
 
@@ -160,28 +170,30 @@ class TrainingDashboard:
         ax.legend(fontsize=9, frameon=True, fancybox=True, shadow=True)
         _annotate_last(ax, ep, self.val_vq, "#e74c3c")
 
-        # ── Row 1, Col 0: Boundary F1 ────────────────────────────────────────
+        # ── Row 1, Col 0: Region Classifier Accuracy ─────────────────────────────
         ax = fig.add_subplot(gs[1, 0])
         _style_pub(ax)
-        ax.plot(ep, self.boundary_f1, color="#16a085", lw=2.5, marker='o', markersize=4, markevery=max(1, len(ep)//10))
+        ax.plot(ep, self.region_acc, color="#16a085", lw=2.5, marker='o', markersize=4, markevery=max(1, len(ep)//10))
         ax.axhline(0.5, color="#95a5a6", ls="--", lw=1.5, label="Target ≥ 0.5", alpha=0.7)
-        ax.set_title("TAD Boundary Detection (F1)\nHigher = better boundary prediction", fontsize=11, color="#2c3e50", pad=10)
+        ax.set_title("Region Classifier Accuracy\n(avg of chrom + genomic bin prediction)", fontsize=11, color="#2c3e50", pad=10)
         ax.set_xlabel("Epoch", fontsize=10)
-        ax.set_ylabel("F1 Score", fontsize=10)
+        ax.set_ylabel("Accuracy", fontsize=10)
         ax.set_ylim(0, 1.05)
         ax.legend(fontsize=9, frameon=True, fancybox=True, shadow=True)
-        _annotate_last(ax, ep, self.boundary_f1, "#16a085")
+        _annotate_last(ax, ep, self.region_acc, "#16a085")
 
-        # ── Row 1, Col 1: Compartment R ───────────────────────────────────────
+        # ── Row 1, Col 1: Classifier Accuracy ────────────────────────────────────
         ax = fig.add_subplot(gs[1, 1])
         _style_pub(ax)
-        ax.plot(ep, self.compartment_r, color="#8e44ad", lw=2.5, marker='o', markersize=4, markevery=max(1, len(ep)//10))
+        ax.plot(ep, self.classifier_acc, color="#e67e22", lw=2.5, marker='o', markersize=4, markevery=max(1, len(ep)//10))
         ax.axhline(0.5, color="#95a5a6", ls="--", lw=1.5, label="Target ≥ 0.5", alpha=0.7)
-        ax.set_title("A/B Compartment Correlation (Pearson R)\nHigher = better compartment prediction", fontsize=11, color="#2c3e50", pad=10)
+        ax.axhline(0.9, color="#27ae60", ls="--", lw=1.5, label="Target ≥ 0.9", alpha=0.7)
+        ax.set_title("Cell-Type Classifier Accuracy\nHigher = better cell-type separation", fontsize=11, color="#2c3e50", pad=10)
         ax.set_xlabel("Epoch", fontsize=10)
-        ax.set_ylabel("Pearson R", fontsize=10)
+        ax.set_ylabel("Accuracy", fontsize=10)
+        ax.set_ylim(0, 1.05)
         ax.legend(fontsize=9, frameon=True, fancybox=True, shadow=True)
-        _annotate_last(ax, ep, self.compartment_r, "#8e44ad")
+        _annotate_last(ax, ep, self.classifier_acc, "#e67e22")
 
         # ── Row 1, Col 2: Active codes + tau ─────────────────────────────────
         ax = fig.add_subplot(gs[1, 2])
@@ -201,11 +213,14 @@ class TrainingDashboard:
         ax.legend(lines1 + lines2, labels1 + labels2,
                   fontsize=9, frameon=True, fancybox=True, shadow=True, loc='upper right')
 
-        # ── Row 2, Col 0-2: PCA of fingerprints (full width) ──────────────────
+        # ── Row 2, Col 0-2: UMAP of fingerprints (full width) ──────────────────
         ax = fig.add_subplot(gs[2, :])
         _style_pub(ax)
-        ax.set_title("Fingerprint Embedding (PCA)\nClusters = distinct cell types; overlap = similar chromatin structure",
-                     fontsize=11, color="#2c3e50", pad=10)
+        sil_str = f"  |  Silhouette={self.silhouette[-1]:.3f}" if self.silhouette else ""
+        ax.set_title(
+            f"Fingerprint Embedding (UMAP, window-level, cosine metric){sil_str}",
+            fontsize=11, color="#2c3e50", pad=6,
+        )
         if self.pca_snapshots:
             snap   = self.pca_snapshots[-1]
             emb    = np.array(snap["embeddings"])
@@ -213,29 +228,33 @@ class TrainingDashboard:
             unique_labels = sorted(set(labels))
             palette = _palette_pub(len(unique_labels))
             label_to_color = {l: palette[i] for i, l in enumerate(unique_labels)}
-            
+
             for lbl in unique_labels:
                 mask = np.array([l == lbl for l in labels])
                 pts  = emb[mask]
                 if len(pts):
                     ax.scatter(pts[:, 0], pts[:, 1],
-                               c=[label_to_color[lbl]], s=120, alpha=0.75,
-                               label=lbl, edgecolors='white', linewidths=1.5)
-            
-            # Add equal aspect ratio and padding
-            ax.set_aspect('equal', adjustable='datalim')
-            margin = 0.15
+                               c=[label_to_color[lbl]], s=60, alpha=0.72,
+                               label=lbl, edgecolors='white', linewidths=0.8)
+
+            margin = 0.08
             x_range = emb[:, 0].max() - emb[:, 0].min()
             y_range = emb[:, 1].max() - emb[:, 1].min()
-            ax.set_xlim(emb[:, 0].min() - margin * x_range, emb[:, 0].max() + margin * x_range)
-            ax.set_ylim(emb[:, 1].min() - margin * y_range, emb[:, 1].max() + margin * y_range)
-            
-            ax.legend(fontsize=10, frameon=True, fancybox=True, shadow=True,
-                      markerscale=1.2, ncol=min(5, len(unique_labels)), loc='best')
-            ax.set_xlabel("Principal Component 1", fontsize=10, fontweight='bold')
-            ax.set_ylabel("Principal Component 2", fontsize=10, fontweight='bold')
+            if x_range > 0 and y_range > 0:
+                ax.set_xlim(emb[:, 0].min() - margin * x_range, emb[:, 0].max() + margin * x_range)
+                ax.set_ylim(emb[:, 1].min() - margin * y_range, emb[:, 1].max() + margin * y_range)
+
+            # Legend outside the axes — right side, never overlaps clusters
+            ax.legend(
+                fontsize=9, frameon=True, fancybox=True,
+                markerscale=1.3, ncol=1,
+                loc='center left', bbox_to_anchor=(1.01, 0.5),
+                borderaxespad=0,
+            )
+            ax.set_xlabel("UMAP 1", fontsize=10, fontweight='bold')
+            ax.set_ylabel("UMAP 2", fontsize=10, fontweight='bold')
         else:
-            ax.text(0.5, 0.5, "No PCA data yet\n(fingerprints will appear after first epoch)",
+            ax.text(0.5, 0.5, "No UMAP data yet\n(fingerprints will appear after first epoch)",
                     ha="center", va="center", color="#95a5a6", fontsize=12,
                     transform=ax.transAxes, style='italic')
 
@@ -262,12 +281,15 @@ class TrainingDashboard:
         ax = fig.add_subplot(gs[3, 1:])
         ax.axis('off')
         if ep:
+            sil_val = self.silhouette[-1] if self.silhouette else 0.0
             summary_text = (
                 f"Training Summary (Epoch {ep[-1]})\n\n"
                 f"• Total Loss:        {self.val_total[-1]:.4f}  (train: {self.train_total[-1]:.4f})\n"
                 f"• Reconstruction:    {self.val_recon[-1]:.4f}\n"
-                f"• Boundary F1:       {self.boundary_f1[-1]:.3f}\n"
-                f"• Compartment R:     {self.compartment_r[-1]:.3f}\n"
+                f"• VQ Commitment:     {self.val_vq[-1]:.4f}\n"
+                f"• Cell Classifier:   {self.classifier_acc[-1]:.3f}\n"
+                f"• Region Classifier: {self.region_acc[-1]:.3f}\n"
+                f"• Silhouette (cos):  {sil_val:.3f}\n"
                 f"• Active Codes:      {self.active_codes[-1]}/{512 if self.codebook_snapshots else '?'}\n"
                 f"• Temperature τ:     {self.tau_f[-1]:.3f}\n\n"
                 f"Best Validation Loss: {min(self.val_total):.4f} (epoch {self.val_total.index(min(self.val_total))})\n"
@@ -283,18 +305,20 @@ class TrainingDashboard:
 
     def _save_json(self):
         data = {
-            "run_name":      self.run_name,
-            "epochs":        self.epochs,
-            "train_total":   self.train_total,
-            "val_total":     self.val_total,
-            "train_recon":   self.train_recon,
-            "val_recon":     self.val_recon,
-            "train_vq":      self.train_vq,
-            "val_vq":        self.val_vq,
-            "boundary_f1":   self.boundary_f1,
-            "compartment_r": self.compartment_r,
-            "active_codes":  self.active_codes,
-            "tau_f":         self.tau_f,
+            "run_name":       self.run_name,
+            "epochs":         self.epochs,
+            "train_total":    self.train_total,
+            "val_total":      self.val_total,
+            "train_recon":    self.train_recon,
+            "val_recon":      self.val_recon,
+            "train_vq":       self.train_vq,
+            "val_vq":         self.val_vq,
+            "classifier_acc": self.classifier_acc,
+            "region_acc":     self.region_acc,
+            "silhouette":     self.silhouette,
+            "compartment_r":  self.compartment_r,
+            "active_codes":   self.active_codes,
+            "tau_f":          self.tau_f,
         }
         with open(self.json_path, "w") as f:
             json.dump(data, f, indent=2)
@@ -368,9 +392,47 @@ def _pca_2d(embeddings: np.ndarray) -> np.ndarray:
         return np.zeros((X.shape[0], 2))
 
 
-def collect_fingerprints(model, loader, device, max_samples: int = 512):
+def _umap_2d(embeddings: np.ndarray, n_neighbors: int = 30, min_dist: float = 0.05) -> np.ndarray:
+    """UMAP to 2D with cosine metric — aligns with retrieval geometry."""
+    try:
+        import umap
+        n_pts = embeddings.shape[0]
+        reducer = umap.UMAP(
+            n_components=2,
+            n_neighbors=min(n_neighbors, max(2, n_pts - 1)),
+            min_dist=min_dist,
+            random_state=42,
+            metric='cosine',
+        )
+        return reducer.fit_transform(embeddings)
+    except ImportError:
+        print("[dashboard] UMAP not installed, falling back to PCA")
+        return _pca_2d(embeddings)
+    except Exception as e:
+        print(f"[dashboard] UMAP failed: {e}, falling back to PCA")
+        return _pca_2d(embeddings)
+
+
+def compute_silhouette(embeddings: np.ndarray, labels: List[str]) -> float:
+    """Silhouette score on L2-normalised embeddings with cosine distance."""
+    if not _HAS_SILHOUETTE or len(embeddings) < 4:
+        return 0.0
+    unique = set(labels)
+    if len(unique) < 2:
+        return 0.0
+    try:
+        fps_norm = sk_normalize(embeddings, norm='l2')
+        label_arr = np.array(labels)
+        return float(_silhouette_score(fps_norm, label_arr, metric='cosine'))
+    except Exception:
+        return 0.0
+
+
+def collect_fingerprints(model, loader, device, max_samples: int = 2000):
     """
-    Collect fingerprints + cell type labels from a dataloader for PCA.
+    Collect window-level fingerprints + cell line labels from a dataloader.
+    Returns ALL windows (not averaged per sample) — one point per tile.
+    Labels are sample_id strings (e.g. "K562", "IMR-90") for color coding.
     Returns (embeddings [N, FP_DIM], labels [N]).
     """
     model.eval()
@@ -382,7 +444,8 @@ def collect_fingerprints(model, loader, device, max_samples: int = 512):
             assay_id = batch["assay_id"].to(device)
             fp = model.encode_fingerprint(contact, assay_id).cpu().float().numpy()
             fps.append(fp)
-            labels.extend(batch.get("cell_type", ["unknown"] * len(fp)))
+            batch_labels = batch.get("sample_id", ["unknown"] * len(fp))
+            labels.extend(batch_labels)
             if sum(len(f) for f in fps) >= max_samples:
                 break
     if not fps:
@@ -393,7 +456,7 @@ def collect_fingerprints(model, loader, device, max_samples: int = 512):
 def collect_codebook_usage(model) -> np.ndarray:
     """Return usage counts per codebook entry."""
     try:
-        usage = model.vq.usage_counts.cpu().numpy().copy()
+        usage = model.vq.usage_count.cpu().numpy().copy()  # correct buffer name
         return usage
     except AttributeError:
         return np.array([])

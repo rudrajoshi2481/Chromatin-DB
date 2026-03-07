@@ -21,7 +21,7 @@ from pathlib import Path
 _src_dir     = Path(__file__).resolve().parent
 PROJECT_ROOT = Path(os.environ.get("HIC_PROJECT_ROOT", str(_src_dir.parent)))
 SRC_DIR      = PROJECT_ROOT / "src"
-DATA_DIR     = PROJECT_ROOT / "data"
+DATA_DIR     = Path("/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data")
 PROCESSED_DIR   = DATA_DIR / "processed"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
 TRASH_DIR    = PROJECT_ROOT / "trash"
@@ -30,16 +30,18 @@ PLOTS_DIR    = TRASH_DIR / "plots"
 
 # ─── Data directories ─────────────────────────────────────────────────────────
 # Override with HIC_MCOOL_DIR / HIC_CCRE_DIR env vars
-_default_mcool = PROJECT_ROOT.parent / "ink-react" / "chromatin-manager" / "data" / "downloads" / "mcool"
-_default_ccre  = PROJECT_ROOT.parent / "ink-react" / "chromatin-manager" / "data" / "downloads" / "ccre"
+_default_mcool = "/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/downloads/mcool"
+_default_ccre  = "/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/downloads/ccre"
 
 MCOOL_DIR = Path(os.environ.get("HIC_MCOOL_DIR", str(_default_mcool)))
 CCRE_DIR  = Path(os.environ.get("HIC_CCRE_DIR",  str(_default_ccre)))
 
-GENCODE_GTF_PATH = Path(os.environ.get(
-    "HIC_GENCODE_GTF",
-    str(DATA_DIR / "gencode.v45.basic.annotation.gtf.gz")
-))
+# GENCODE_GTF_PATH = Path(os.environ.get(
+#     "HIC_GENCODE_GTF",
+#     str(DATA_DIR / "gencode.v45.basic.annotation.gtf.gz")
+# ))
+
+GENCODE_GTF_PATH = Path("/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/gencode.v45.basic.annotation.gtf.gz")
 
 # DuckDB and FAISS paths
 DB_PATH    = DATA_DIR / "hic_fingerprints.duckdb"
@@ -177,37 +179,48 @@ REVIVAL_INTERVAL   = 100
 # Masker
 KEEP_RATIO         = 0.5            # keep 50% of 1024 tokens → 512 visible
 TAU_F_WARMUP       = 1.0
-TAU_F_FINAL        = 0.3
+TAU_F_FINAL        = 0.5            # hard floor — never go below 0.5 (prevents codebook collapse)
 TAU_F_WARMUP_EPOCHS  = 10
-TAU_F_ANNEAL_EPOCHS  = 20          # anneal over epochs 10–30
+TAU_F_ANNEAL_EPOCHS  = 30          # slow anneal over epochs 10–40 (was 20)
 
 # Transformer demasker
 N_TRANSFORMER_LAYERS = 4
 N_HEADS              = 8
 FFN_DIM              = 1024
 SPATIAL_TOKENS       = 1024        # 32×32 = 1024
+DEMASKER_INNER_DIM   = 128         # project 256→128 inside demasker (cuts 3.1M→~800K)
 
 # Decoder
 DECODER_CHANNELS   = [128, 64, 32]  # after the 256-channel demasker output
 
 # Fingerprint projection
 FP_DIM             = 32            # 256 → 32
+USE_ATTENTION_POOLING = False      # Use learned attention pooling instead of mean pooling
 
 # ─── Loss ─────────────────────────────────────────────────────────────────────
 POS_WEIGHT_BOUNDARY = 9.0          # boundary bins ≈ 5–10%
 LOSS_W_RECON        = 1.0
-LOSS_W_VQ           = 0.25
-LOSS_W_BOUNDARY     = 0.5
-LOSS_W_COMPARTMENT  = 0.75
+LOSS_W_VQ           = 0.75          # RAISED: stronger pull to codebook, flattens commitment drift
+LOSS_W_BOUNDARY     = 0.0
+LOSS_W_COMPARTMENT  = 0.0
+LOSS_W_CLASSIFIER   = 1.0
+LOSS_W_REGION       = 1.0           # region classifier (chrom + bin): equal weight to cell classifier
 AUX_WARMUP_EPOCHS   = 5
 AUX_RAMP_EPOCHS     = 10
+
+# ─── Classifier Heads ───────────────────────────────────────────────────────────────────
+# Computed at runtime from CELL_LINE_REGISTRY — set as a fallback default here
+N_CELL_TYPES        = 16           # updated dynamically in train.py
+# Region classifier: chromosome + coarse genomic bin
+N_CHROMS            = 23           # chr1–22 + chrX
+N_GENOMIC_BINS      = 30           # ~10 Mb coarse bins (genome ~3 Gb / 100 Mb = 30 bins)
 
 # ─── Training ─────────────────────────────────────────────────────────────────
 BATCH_SIZE         = 8
 NUM_EPOCHS         = 50
 LR                 = 1e-4
 BETAS              = (0.9, 0.999)
-WEIGHT_DECAY       = 0.01
+WEIGHT_DECAY       = 0.05
 GRAD_CLIP          = 1.0
 WARMUP_STEPS       = 500
 NUM_WORKERS        = 4

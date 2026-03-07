@@ -19,7 +19,7 @@ from masker import VanillaMasker
 from codebook import EMAVectorQuantizer
 from transformer import TransformerDemasker
 from decoder import CNNDecoder
-from heads import ContactReconHead, BoundaryHead, CompartmentHead
+from heads import ContactReconHead, BoundaryHead, CompartmentHead, CellClassifierHead, RegionClassifierHead
 
 
 class MQVAE(nn.Module):
@@ -45,6 +45,11 @@ class MQVAE(nn.Module):
         keep_ratio:           float = None,
         use_boundary_head:    bool  = True,
         use_compartment_head: bool  = True,
+        use_classifier_head:  bool  = True,
+        use_region_head:      bool  = True,
+        n_cell_types:         int   = None,
+        n_chroms:             int   = None,
+        n_bins:               int   = None,
         use_masking:          bool  = True,
         use_film:             bool  = True,
         # Explicit architecture overrides (for small-model tests)
@@ -59,12 +64,17 @@ class MQVAE(nn.Module):
         self.use_film             = use_film
         self.use_boundary_head    = use_boundary_head
         self.use_compartment_head = use_compartment_head
+        self.use_classifier_head  = use_classifier_head
+        self.use_region_head      = use_region_head
 
         # Resolve dims — explicit args take precedence over config
-        n_codes    = n_codes    if n_codes    is not None else _cfg.N_CODES
-        code_dim   = code_dim   if code_dim   is not None else _cfg.CODE_DIM
-        fp_dim     = fp_dim     if fp_dim     is not None else _cfg.FP_DIM
-        keep_ratio = keep_ratio if keep_ratio is not None else _cfg.KEEP_RATIO
+        n_codes      = n_codes      if n_codes      is not None else _cfg.N_CODES
+        code_dim     = code_dim     if code_dim     is not None else _cfg.CODE_DIM
+        fp_dim       = fp_dim       if fp_dim       is not None else _cfg.FP_DIM
+        keep_ratio   = keep_ratio   if keep_ratio   is not None else _cfg.KEEP_RATIO
+        n_cell_types = n_cell_types if n_cell_types is not None else _cfg.N_CELL_TYPES
+        n_chroms     = n_chroms     if n_chroms     is not None else _cfg.N_CHROMS
+        n_bins       = n_bins       if n_bins       is not None else _cfg.N_GENOMIC_BINS
         enc_ch     = encoder_channels     or _cfg.ENCODER_CHANNELS
         n_layers   = n_transformer_layers or _cfg.N_TRANSFORMER_LAYERS
         n_h        = n_heads              or _cfg.N_HEADS
@@ -78,6 +88,10 @@ class MQVAE(nn.Module):
             n_h=n_h, ffn=ffn, dec_ch=dec_ch,
             use_boundary_head=use_boundary_head,
             use_compartment_head=use_compartment_head,
+            use_classifier_head=use_classifier_head,
+            use_region_head=use_region_head,
+            n_cell_types=n_cell_types,
+            n_chroms=n_chroms, n_bins=n_bins,
             use_masking=use_masking, use_film=use_film,
         )
 
@@ -94,9 +108,15 @@ class MQVAE(nn.Module):
         )
         self.decoder    = CNNDecoder(in_channels=code_dim, stage_channels=dec_ch)
 
-        self.contact_head    = ContactReconHead(in_channels=dec_ch[-1])
-        self.boundary_head   = BoundaryHead(in_channels=dec_ch[-1])    if use_boundary_head    else None
+        self.contact_head     = ContactReconHead(in_channels=dec_ch[-1])
+        self.boundary_head    = BoundaryHead(in_channels=dec_ch[-1])    if use_boundary_head    else None
         self.compartment_head = CompartmentHead(in_channels=dec_ch[-1]) if use_compartment_head else None
+        self.classifier_head  = CellClassifierHead(
+            in_dim=code_dim, n_classes=n_cell_types
+        ) if use_classifier_head else None
+        self.region_head      = RegionClassifierHead(
+            in_dim=code_dim, n_chroms=n_chroms, n_bins=n_bins
+        ) if use_region_head else None
 
     # ── Temperature control (called by trainer each epoch) ────────────────────
 
@@ -144,8 +164,9 @@ class MQVAE(nn.Module):
         # ── 3. Vector Quantize ────────────────────────────────────────────────
         z_q_st, commit_loss, indices = self.vq(z_vis)     # [B, K, 256], scalar, [B, K]
 
-        # ── 4. Fingerprint (from encoder output at visible positions) ─────────
+        # ── 4. Fingerprint + cell-type classifier ────────────────────────────
         fingerprint = self.vq.encode_fingerprint(z_q_st)  # [B, fp_dim]
+        z_e_mean    = z_vis.mean(dim=1)                    # [B, code_dim] full grad
 
         # ── 5. Demasker ───────────────────────────────────────────────────────
         feat_3d = self.demasker(z_q_st, vis_idx)          # [B, 256, 32, 32]
@@ -159,6 +180,7 @@ class MQVAE(nn.Module):
         out = {
             "contact_recon": contact_recon,
             "z_e":           z_vis,                       # encoder outputs
+            "z_e_mean":      z_e_mean,                    # [B, D] for classifier
             "z_q":           z_q_st.detach(),             # stopped for loss
             "commit_loss":   commit_loss,
             "indices":       indices,
@@ -170,6 +192,14 @@ class MQVAE(nn.Module):
 
         if self.use_compartment_head and self.compartment_head is not None:
             out["compartment"] = self.compartment_head(feat_2d)    # [B, 256]
+
+        if self.use_classifier_head and self.classifier_head is not None:
+            out["cell_logits"] = self.classifier_head(z_e_mean)    # [B, n_cell_types]
+
+        if self.use_region_head and self.region_head is not None:
+            chrom_logits, bin_logits = self.region_head(z_e_mean)
+            out["chrom_logits"] = chrom_logits                     # [B, n_chroms]
+            out["bin_logits"]   = bin_logits                       # [B, n_bins]
 
         return out
 

@@ -11,6 +11,7 @@ import torch.nn as nn
 
 from config import (
     N_TRANSFORMER_LAYERS, N_HEADS, FFN_DIM, CODE_DIM, SPATIAL_TOKENS,
+    DEMASKER_INNER_DIM,
 )
 from attention import MultiHeadSelfAttention, FFNBlock
 
@@ -54,17 +55,19 @@ class TransformerDemasker(nn.Module):
 
     def __init__(
         self,
-        n_tokens: int   = SPATIAL_TOKENS,
-        d_model:  int   = CODE_DIM,
-        n_layers: int   = N_TRANSFORMER_LAYERS,
-        n_heads:  int   = N_HEADS,
-        ffn_dim:  int   = FFN_DIM,
-        dropout:  float = 0.0,
+        n_tokens:  int   = SPATIAL_TOKENS,
+        d_model:   int   = CODE_DIM,
+        inner_dim: int   = DEMASKER_INNER_DIM,
+        n_layers:  int   = N_TRANSFORMER_LAYERS,
+        n_heads:   int   = N_HEADS,
+        ffn_dim:   int   = FFN_DIM,
+        dropout:   float = 0.0,
     ):
         super().__init__()
-        self.n_tokens = n_tokens                           # 1024
-        self.d_model  = d_model                            # 256
-        side          = int(n_tokens ** 0.5)               # 32
+        self.n_tokens  = n_tokens                          # 1024
+        self.d_model   = d_model                           # 256
+        self.inner_dim = inner_dim                         # 128
+        side           = int(n_tokens ** 0.5)              # 32
         assert side * side == n_tokens, \
             f"n_tokens={n_tokens} must be a perfect square"
         self.side = side
@@ -77,12 +80,17 @@ class TransformerDemasker(nn.Module):
         self.pos_embed = nn.Parameter(torch.zeros(1, n_tokens, d_model))
         nn.init.trunc_normal_(self.pos_embed, std=0.02)
 
-        # Transformer blocks
+        # Compress to inner_dim before transformer, expand back after
+        self.input_proj  = nn.Linear(d_model, inner_dim, bias=False)
+        self.output_proj = nn.Linear(inner_dim, d_model, bias=False)
+
+        # Transformer blocks run at inner_dim
+        inner_ffn = ffn_dim * inner_dim // d_model         # scale ffn proportionally
         self.blocks = nn.ModuleList([
-            TransformerBlock(d_model, n_heads, ffn_dim, dropout)
+            TransformerBlock(inner_dim, n_heads, inner_ffn, dropout)
             for _ in range(n_layers)
         ])
-        self.norm = nn.LayerNorm(d_model)
+        self.norm = nn.LayerNorm(inner_dim)
 
     def forward(
         self,
@@ -107,10 +115,16 @@ class TransformerDemasker(nn.Module):
         # Add positional embeddings
         seq = seq + self.pos_embed                         # [B, N, D]
 
-        # Transformer blocks
+        # Compress: D → inner_dim
+        seq = self.input_proj(seq)                         # [B, N, inner_dim]
+
+        # Transformer blocks at inner_dim
         for block in self.blocks:
             seq = block(seq)
-        seq = self.norm(seq)                               # [B, N, D]
+        seq = self.norm(seq)                               # [B, N, inner_dim]
+
+        # Expand back: inner_dim → D
+        seq = self.output_proj(seq)                        # [B, N, D]
 
         # Reshape to spatial feature map: [B, N, D] → [B, D, H, W]
         seq = seq.transpose(1, 2)                          # [B, D, N]

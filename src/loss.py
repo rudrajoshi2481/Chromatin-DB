@@ -16,6 +16,7 @@ from typing import Dict, Tuple
 from config import (
     POS_WEIGHT_BOUNDARY,
     LOSS_W_RECON, LOSS_W_VQ, LOSS_W_BOUNDARY, LOSS_W_COMPARTMENT,
+    LOSS_W_CLASSIFIER, LOSS_W_REGION,
     AUX_WARMUP_EPOCHS, AUX_RAMP_EPOCHS,
 )
 
@@ -61,9 +62,12 @@ def aux_weight(epoch: int, warmup: int = AUX_WARMUP_EPOCHS, ramp: int = AUX_RAMP
 # ── Total Loss ────────────────────────────────────────────────────────────────
 
 def total_loss(
-    outputs: Dict[str, torch.Tensor],
-    targets: Dict[str, torch.Tensor],
-    epoch:   int,
+    outputs:   Dict[str, torch.Tensor],
+    targets:   Dict[str, torch.Tensor],
+    epoch:     int,
+    cell_idx:  torch.Tensor = None,
+    chrom_idx: torch.Tensor = None,
+    bin_idx:   torch.Tensor = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute multi-head training loss.
@@ -94,9 +98,8 @@ def total_loss(
         L_vq = F.mse_loss(z_e, z_q.detach())
 
     # ── Head 2: TAD Boundary detection ───────────────────────────────────────
-    L_boundary    = torch.tensor(0.0, device=device)
-    boundary_f1   = 0.0
-    has_boundary  = "boundary_logits" in outputs and "boundary" in targets
+    L_boundary   = torch.tensor(0.0, device=device)
+    has_boundary = "boundary_logits" in outputs and "boundary" in targets
     if has_boundary:
         bd_logits = outputs["boundary_logits"]     # [B, 256] raw logits
         bd_true   = targets["boundary"]            # [B, 256]
@@ -104,15 +107,6 @@ def total_loss(
         L_boundary = F.binary_cross_entropy_with_logits(
             bd_logits, bd_true, pos_weight=pos_w
         )
-        # F1 estimate for logging
-        with torch.no_grad():
-            pred_bin  = (bd_logits.sigmoid() > 0.5).float()
-            tp = (pred_bin * bd_true).sum()
-            fp = (pred_bin * (1 - bd_true)).sum()
-            fn = ((1 - pred_bin) * bd_true).sum()
-            boundary_f1 = float(
-                (2 * tp / (2 * tp + fp + fn + 1e-8)).item()
-            )
 
     # ── Head 3: A/B Compartment score ────────────────────────────────────────
     L_compartment   = torch.tensor(0.0, device=device)
@@ -128,24 +122,60 @@ def total_loss(
         with torch.no_grad():
             compartment_r = float(pearson_1d(comp_pred, comp_true).item())
 
-    # ── Weighted total ────────────────────────────────────────────────────────
+    # ── Head 4: Cell-type patch classifier ──────────────────────────────────────
+    L_classifier  = torch.tensor(0.0, device=device)
+    classifier_acc = 0.0
+    has_classifier = (
+        "cell_logits" in outputs
+        and cell_idx is not None
+        and LOSS_W_CLASSIFIER > 0
+    )
+    if has_classifier:
+        logits = outputs["cell_logits"]          # [B, n_cell_types]
+        L_classifier = F.cross_entropy(logits, cell_idx)
+        with torch.no_grad():
+            preds = logits.argmax(dim=1)
+            classifier_acc = float((preds == cell_idx).float().mean().item())
+
+    # ── Head 5: Region classifier (chromosome + genomic bin) ──────────────────
+    L_region    = torch.tensor(0.0, device=device)
+    region_acc  = 0.0
+    has_region  = (
+        "chrom_logits" in outputs and "bin_logits" in outputs
+        and chrom_idx is not None and bin_idx is not None
+        and LOSS_W_REGION > 0
+    )
+    if has_region:
+        chrom_loss = F.cross_entropy(outputs["chrom_logits"], chrom_idx)
+        bin_loss   = F.cross_entropy(outputs["bin_logits"],   bin_idx)
+        L_region   = 0.5 * chrom_loss + 0.5 * bin_loss
+        with torch.no_grad():
+            chrom_acc = (outputs["chrom_logits"].argmax(1) == chrom_idx).float().mean()
+            bin_acc   = (outputs["bin_logits"].argmax(1)   == bin_idx).float().mean()
+            region_acc = float(0.5 * (chrom_acc + bin_acc).item())
+
+    # ── Weighted total ─────────────────────────────────────────────────────────────
     aux_w = aux_weight(epoch)
     L_total = (
         LOSS_W_RECON        * L_recon
         + LOSS_W_VQ         * L_vq
         + aux_w * LOSS_W_BOUNDARY    * L_boundary
         + aux_w * LOSS_W_COMPARTMENT * L_compartment
+        + LOSS_W_CLASSIFIER * L_classifier
+        + LOSS_W_REGION     * L_region
     )
 
     metrics = {
-        "total":        float(L_total.item()),
-        "recon":        float(L_recon.item()),
-        "vq":           float(L_vq.item()),
-        "boundary":     float(L_boundary.item()),
-        "compartment":  float(L_compartment.item()),
-        "boundary_f1":  boundary_f1,
-        "compartment_r": compartment_r,
-        "aux_weight":   aux_w,
+        "total":          float(L_total.item()),
+        "recon":          float(L_recon.item()),
+        "vq":             float(L_vq.item()),
+        "compartment":    float(L_compartment.item()),
+        "classifier":     float(L_classifier.item()),
+        "classifier_acc": classifier_acc,
+        "region":         float(L_region.item()),
+        "region_acc":     region_acc,
+        "compartment_r":  compartment_r,
+        "aux_weight":     aux_w,
     }
 
     return L_total, metrics

@@ -1,9 +1,16 @@
 """
-heads.py — Three decoder heads branching from [B, 32, 256, 256].
+heads.py — Decoder heads for MQ-VAE.
 
-Head 1: ContactReconHead   → [B, 1, 256, 256]  (MSE + Pearson)
-Head 2: BoundaryHead       → [B, 256] raw logits  (BCEWithLogits)
-Head 3: CompartmentHead    → [B, 256] in [-1, 1]  (MSE + Pearson)
+Head 1: ContactReconHead     → [B, 1, 256, 256]  (MSE + Pearson)
+Head 2: BoundaryHead         → [B, 256] raw logits  (BCEWithLogits)
+Head 3: CompartmentHead      → [B, 256] in [-1, 1]  (MSE + Pearson)
+Head 4: CellClassifierHead   → [B, n_cell_types]  (CrossEntropy)
+         Operates on z_e_mean (pre-VQ encoder features, full gradient path).
+         Forces the encoder to learn cell-type discriminative representations.
+Head 5: RegionClassifierHead → [B, n_chroms] + [B, n_bins]  (CrossEntropy x2)
+         Predicts which chromosome and ~10 Mb genomic bin a patch comes from.
+         Operates on z_e_mean. Jointly with cell classifier, forces encoder to
+         learn both cell-type identity AND genomic location.
 """
 
 import torch
@@ -125,3 +132,77 @@ class CompartmentHead(nn.Module):
         """
         pooled = self.row_pool(feat_2d).squeeze(-1)   # [B, 32, 256]
         return self.head(pooled).squeeze(1)            # [B, 256]
+
+
+# ── Head 5: Region Classifier (Chromosome + Genomic Bin) ─────────────────────
+
+class RegionClassifierHead(nn.Module):
+    """
+    Predicts the genomic origin of a patch:
+      - Which chromosome (e.g. chr1..chr22, chrX = 23 classes)
+      - Which coarse genomic bin (~10 Mb windows, ~30 bins per chromosome)
+
+    Operates on z_e_mean: [B, code_dim]  — same input as CellClassifierHead.
+    Forces the encoder to also encode spatial/positional context.
+    """
+
+    def __init__(
+        self,
+        in_dim:   int = 256,
+        n_chroms: int = 23,    # chr1-22 + chrX
+        n_bins:   int = 30,    # coarse ~10 Mb bins across each chromosome
+        dropout:  float = 0.2,
+    ):
+        super().__init__()
+        self.n_chroms = n_chroms
+        self.n_bins   = n_bins
+
+        # Shared trunk
+        self.trunk = nn.Sequential(
+            nn.Linear(in_dim, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 64),
+            nn.GELU(),
+        )
+        # Two separate heads branching from the trunk
+        self.chrom_head = nn.Linear(64, n_chroms)   # chromosome logits
+        self.bin_head   = nn.Linear(64, n_bins)     # coarse bin logits
+
+    def forward(self, z_e_mean: torch.Tensor):
+        """
+        z_e_mean: [B, code_dim]
+        Returns: chrom_logits [B, n_chroms], bin_logits [B, n_bins]
+        """
+        feat = self.trunk(z_e_mean)
+        return self.chrom_head(feat), self.bin_head(feat)
+
+
+# ── Head 4: Cell-Type Classifier ──────────────────────────────────────────────
+
+class CellClassifierHead(nn.Module):
+    """
+    Classifies which cell type a patch belongs to.
+    Operates on z_e_mean: mean-pooled pre-VQ encoder output [B, code_dim].
+    Full gradient path through encoder forces it to learn cell-type features.
+
+    Using dropout for regularisation since we have ~186 tiles per cell type.
+    """
+
+    def __init__(self, in_dim: int = 256, n_classes: int = 16, dropout: float = 0.3):
+        super().__init__()
+        self.head = nn.Sequential(
+            nn.Linear(in_dim, 128),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(128, 64),
+            nn.GELU(),
+            nn.Dropout(dropout),
+            nn.Linear(64, n_classes),   # raw logits → CrossEntropyLoss externally
+        )
+
+    def forward(self, z_e_mean: torch.Tensor) -> torch.Tensor:
+        """
+        z_e_mean: [B, code_dim]  →  [B, n_classes] raw logits
+        """
+        return self.head(z_e_mean)

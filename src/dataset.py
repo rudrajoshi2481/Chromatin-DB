@@ -13,7 +13,7 @@ import random
 from config import (
     PROCESSED_DIR, CELL_LINE_REGISTRY, ASSAY_TYPES,
     TILE_SIZE, BATCH_SIZE, NUM_WORKERS, SEED,
-    CHROMOSOMES,
+    CHROMOSOMES, N_CHROMS, N_GENOMIC_BINS,
 )
 
 
@@ -38,6 +38,13 @@ class HiCTileDataset(Dataset):
         self.augment = augment
         self.records: List[Dict] = []
 
+        # Build unique integer index per sample_id for classifier loss
+        valid_cell_lines = [s for s in cell_lines if (processed_dir / s).exists()]
+        self.cell_idx_map: Dict[str, int] = {sid: i for i, sid in enumerate(sorted(valid_cell_lines))}
+
+        # Chromosome index map (chr1=0 ... chr22=21, chrX=22)
+        self.chrom_idx_map: Dict[str, int] = {c: i for i, c in enumerate(CHROMOSOMES[:N_CHROMS])}
+
         for sample_id in cell_lines:
             assay_type = CELL_LINE_REGISTRY[sample_id]["assay"]
             assay_id   = ASSAY_TYPES.get(assay_type, 0)
@@ -55,13 +62,21 @@ class HiCTileDataset(Dataset):
                 data = np.load(str(npz_path), allow_pickle=True)
                 n = data["matrices"].shape[0]
                 for i in range(n):
+                    chrom_str = str(data["chroms"][i])
+                    start_bp  = int(data["start_bps"][i])
+                    # Coarse genomic bin: 10 Mb windows (BIN_SIZE * 256 = tile size in bp)
+                    # Map start position into ~30 coarse bins across the whole genome
+                    genomic_bin = min(int(start_bp // 100_000_000), N_GENOMIC_BINS - 1)
                     self.records.append({
                         "npz_path":    str(npz_path),
                         "idx":         i,
                         "assay_id":    assay_id,
+                        "cell_idx":    self.cell_idx_map.get(sample_id, 0),
+                        "chrom_idx":   self.chrom_idx_map.get(chrom_str, 0),
+                        "bin_idx":     genomic_bin,
                         "sample_id":   sample_id,
-                        "chr":         str(data["chroms"][i]),
-                        "start_bp":    int(data["start_bps"][i]),
+                        "chr":         chrom_str,
+                        "start_bp":    start_bp,
                         "end_bp":      int(data["end_bps"][i]),
                     })
 
@@ -98,11 +113,14 @@ class HiCTileDataset(Dataset):
             "contact":     contact,
             "boundary":    torch.from_numpy(boundary),
             "compartment": torch.from_numpy(compartment),
-            "assay_id":    torch.tensor(rec["assay_id"], dtype=torch.long),
+            "assay_id":    torch.tensor(rec["assay_id"],  dtype=torch.long),
+            "cell_idx":    torch.tensor(rec["cell_idx"],  dtype=torch.long),
+            "chrom_idx":   torch.tensor(rec["chrom_idx"], dtype=torch.long),
+            "bin_idx":     torch.tensor(rec["bin_idx"],   dtype=torch.long),
             "sample_id":   rec["sample_id"],
             "chr":         rec["chr"],
             "start_bp":    torch.tensor(rec["start_bp"], dtype=torch.long),
-            "end_bp":      torch.tensor(rec["end_bp"], dtype=torch.long),
+            "end_bp":      torch.tensor(rec["end_bp"],   dtype=torch.long),
         }
 
 
