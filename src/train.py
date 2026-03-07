@@ -61,7 +61,7 @@ def train_one_epoch(
     log_every: int = LOG_EVERY_N_STEPS,
 ) -> dict:
     model.train()
-    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","region","region_acc","compartment_r"]}
+    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","compartment_r"]}
     n_steps = 0
 
     pbar = tqdm(loader, desc=f"Epoch {epoch:02d} [train]", leave=False)
@@ -71,13 +71,11 @@ def train_one_epoch(
         compartment = batch["compartment"].to(device)    # [B, 256]
         assay_id    = batch["assay_id"].to(device)       # [B]
         cell_idx    = batch["cell_idx"].to(device)       # [B] unique int per cell line
-        chrom_idx   = batch["chrom_idx"].to(device)      # [B]
-        bin_idx     = batch["bin_idx"].to(device)        # [B]
 
         outputs = model(contact, assay_id)
         targets = {"contact": contact, "boundary": boundary, "compartment": compartment}
 
-        loss, metrics = total_loss(outputs, targets, epoch, cell_idx, chrom_idx, bin_idx)
+        loss, metrics = total_loss(outputs, targets, epoch, cell_idx)
 
         optimizer.zero_grad()
         loss.backward()
@@ -94,7 +92,6 @@ def train_one_epoch(
                 loss=f"{metrics['total']:.4f}",
                 recon=f"{metrics['recon']:.4f}",
                 cls=f"{metrics['classifier_acc']:.2f}",
-                rgn=f"{metrics['region_acc']:.2f}",
             )
 
     return {k: v / max(n_steps, 1) for k, v in running.items()}
@@ -108,7 +105,7 @@ def validate(
     device: torch.device,
 ) -> dict:
     model.eval()
-    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","region","region_acc","compartment_r"]}
+    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","compartment_r"]}
     n_steps = 0
 
     for batch in tqdm(loader, desc=f"Epoch {epoch:02d} [val]  ", leave=False):
@@ -117,12 +114,10 @@ def validate(
         compartment = batch["compartment"].to(device)
         assay_id    = batch["assay_id"].to(device)
         cell_idx    = batch["cell_idx"].to(device)
-        chrom_idx   = batch["chrom_idx"].to(device)
-        bin_idx     = batch["bin_idx"].to(device)
 
         outputs = model(contact, assay_id)
         targets = {"contact": contact, "boundary": boundary, "compartment": compartment}
-        _, metrics = total_loss(outputs, targets, epoch, cell_idx, chrom_idx, bin_idx)
+        _, metrics = total_loss(outputs, targets, epoch, cell_idx)
 
         for k in running:
             running[k] += metrics.get(k, 0.0)
@@ -159,7 +154,6 @@ def train(
     use_boundary_head:    bool = True,
     use_compartment_head: bool = True,
     use_classifier_head:  bool = True,
-    use_region_head:      bool = True,
     use_masking:          bool = True,
     use_film:             bool = True,
     n_codes:              int  = 512,
@@ -206,7 +200,6 @@ def train(
         use_boundary_head    = use_boundary_head,
         use_compartment_head = use_compartment_head,
         use_classifier_head  = use_classifier_head,
-        use_region_head      = use_region_head,
         n_cell_types         = n_cell_types,
         use_masking          = use_masking,
         use_film             = use_film,
@@ -218,7 +211,6 @@ def train(
         "use_boundary_head":    use_boundary_head,
         "use_compartment_head": use_compartment_head,
         "use_classifier_head":  use_classifier_head,
-        "use_region_head":      use_region_head,
         "n_cell_types":         n_cell_types,
         "use_masking":          use_masking,
         "use_film":             use_film,
@@ -275,7 +267,6 @@ def train(
             f"val={val_metrics['total']:.4f} | "
             f"recon={val_metrics['recon']:.4f} "
             f"cls={val_metrics['classifier_acc']:.2f} "
-            f"rgn={val_metrics['region_acc']:.2f} "
             f"sil={val_metrics.get('silhouette', 0.0):.3f} | "
             f"codes={active_codes}/{n_codes} τ={tau_f:.2f} [{elapsed:.0f}s]"
         )
@@ -370,7 +361,6 @@ def parse_args():
     p.add_argument("--no_boundary",    action="store_true")
     p.add_argument("--no_compartment", action="store_true")
     p.add_argument("--no_classifier",  action="store_true")
-    p.add_argument("--no_region",      action="store_true")
     p.add_argument("--no_masking",     action="store_true")
     p.add_argument("--no_film",        action="store_true")
     p.add_argument("--n_codes",     type=int,   default=512)
@@ -392,7 +382,6 @@ if __name__ == "__main__":
         use_boundary_head    = not args.no_boundary,
         use_compartment_head = not args.no_compartment,
         use_classifier_head  = not args.no_classifier,
-        use_region_head      = not args.no_region,
         use_masking          = not args.no_masking,
         use_film             = not args.no_film,
         n_codes              = args.n_codes,

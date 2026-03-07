@@ -16,7 +16,7 @@ from typing import Dict, Tuple
 from config import (
     POS_WEIGHT_BOUNDARY,
     LOSS_W_RECON, LOSS_W_VQ, LOSS_W_BOUNDARY, LOSS_W_COMPARTMENT,
-    LOSS_W_CLASSIFIER, LOSS_W_REGION,
+    LOSS_W_CLASSIFIER,
     AUX_WARMUP_EPOCHS, AUX_RAMP_EPOCHS,
 )
 
@@ -66,8 +66,6 @@ def total_loss(
     targets:   Dict[str, torch.Tensor],
     epoch:     int,
     cell_idx:  torch.Tensor = None,
-    chrom_idx: torch.Tensor = None,
-    bin_idx:   torch.Tensor = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
     Compute multi-head training loss.
@@ -137,23 +135,6 @@ def total_loss(
             preds = logits.argmax(dim=1)
             classifier_acc = float((preds == cell_idx).float().mean().item())
 
-    # ── Head 5: Region classifier (chromosome + genomic bin) ──────────────────
-    L_region    = torch.tensor(0.0, device=device)
-    region_acc  = 0.0
-    has_region  = (
-        "chrom_logits" in outputs and "bin_logits" in outputs
-        and chrom_idx is not None and bin_idx is not None
-        and LOSS_W_REGION > 0
-    )
-    if has_region:
-        chrom_loss = F.cross_entropy(outputs["chrom_logits"], chrom_idx)
-        bin_loss   = F.cross_entropy(outputs["bin_logits"],   bin_idx)
-        L_region   = 0.5 * chrom_loss + 0.5 * bin_loss
-        with torch.no_grad():
-            chrom_acc = (outputs["chrom_logits"].argmax(1) == chrom_idx).float().mean()
-            bin_acc   = (outputs["bin_logits"].argmax(1)   == bin_idx).float().mean()
-            region_acc = float(0.5 * (chrom_acc + bin_acc).item())
-
     # ── Weighted total ─────────────────────────────────────────────────────────────
     aux_w = aux_weight(epoch)
     L_total = (
@@ -162,7 +143,6 @@ def total_loss(
         + aux_w * LOSS_W_BOUNDARY    * L_boundary
         + aux_w * LOSS_W_COMPARTMENT * L_compartment
         + LOSS_W_CLASSIFIER * L_classifier
-        + LOSS_W_REGION     * L_region
     )
 
     metrics = {
@@ -172,8 +152,6 @@ def total_loss(
         "compartment":    float(L_compartment.item()),
         "classifier":     float(L_classifier.item()),
         "classifier_acc": classifier_acc,
-        "region":         float(L_region.item()),
-        "region_acc":     region_acc,
         "compartment_r":  compartment_r,
         "aux_weight":     aux_w,
     }

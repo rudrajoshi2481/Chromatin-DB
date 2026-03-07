@@ -60,7 +60,6 @@ class TrainingDashboard:
         self.val_vq:        List[float] = []
         self.compartment_r: List[float] = []
         self.classifier_acc: List[float] = []
-        self.region_acc:     List[float] = []
         self.silhouette:     List[float] = []
         self.active_codes:  List[int]   = []
         self.tau_f:         List[float] = []
@@ -95,7 +94,6 @@ class TrainingDashboard:
         self.val_vq.append(val_metrics.get("vq", 0))
         self.compartment_r.append(val_metrics.get("compartment_r", 0))
         self.classifier_acc.append(val_metrics.get("classifier_acc", 0))
-        self.region_acc.append(val_metrics.get("region_acc", 0))
         self.silhouette.append(val_metrics.get("silhouette", 0.0))
         self.active_codes.append(val_metrics.get("active_codes",
                                   train_metrics.get("active_codes", 0)))
@@ -170,17 +168,23 @@ class TrainingDashboard:
         ax.legend(fontsize=9, frameon=True, fancybox=True, shadow=True)
         _annotate_last(ax, ep, self.val_vq, "#e74c3c")
 
-        # ── Row 1, Col 0: Region Classifier Accuracy ─────────────────────────────
+        # ── Row 1, Col 0: Active codes + tau ─────────────────────────────────
         ax = fig.add_subplot(gs[1, 0])
         _style_pub(ax)
-        ax.plot(ep, self.region_acc, color="#16a085", lw=2.5, marker='o', markersize=4, markevery=max(1, len(ep)//10))
-        ax.axhline(0.5, color="#95a5a6", ls="--", lw=1.5, label="Target ≥ 0.5", alpha=0.7)
-        ax.set_title("Region Classifier Accuracy\n(avg of chrom + genomic bin prediction)", fontsize=11, color="#2c3e50", pad=10)
+        ax2 = ax.twinx()
+        ax.plot(ep, self.active_codes, color="#f39c12", lw=2.5, label="Active Codes", marker='o', markersize=4, markevery=max(1, len(ep)//10))
+        ax2.plot(ep, self.tau_f, color="#7f8c8d", lw=2, ls="--", label="Temperature τ", marker='s', markersize=3, markevery=max(1, len(ep)//10))
+        ax.set_title("Codebook Utilization\nMore active codes = better diversity", fontsize=11, color="#2c3e50", pad=10)
         ax.set_xlabel("Epoch", fontsize=10)
-        ax.set_ylabel("Accuracy", fontsize=10)
-        ax.set_ylim(0, 1.05)
-        ax.legend(fontsize=9, frameon=True, fancybox=True, shadow=True)
-        _annotate_last(ax, ep, self.region_acc, "#16a085")
+        ax.set_ylabel("Active Codes", color="#f39c12", fontsize=10, fontweight='bold')
+        ax2.set_ylabel("Gumbel Temperature τ", color="#7f8c8d", fontsize=10, fontweight='bold')
+        _style_pub(ax2)
+        ax2.tick_params(axis="y", labelcolor="#7f8c8d", labelsize=9)
+        ax.tick_params(axis="y", labelcolor="#f39c12", labelsize=9)
+        lines1, labels1 = ax.get_legend_handles_labels()
+        lines2, labels2 = ax2.get_legend_handles_labels()
+        ax.legend(lines1 + lines2, labels1 + labels2,
+                  fontsize=9, frameon=True, fancybox=True, shadow=True, loc='upper right')
 
         # ── Row 1, Col 1: Classifier Accuracy ────────────────────────────────────
         ax = fig.add_subplot(gs[1, 1])
@@ -288,7 +292,6 @@ class TrainingDashboard:
                 f"• Reconstruction:    {self.val_recon[-1]:.4f}\n"
                 f"• VQ Commitment:     {self.val_vq[-1]:.4f}\n"
                 f"• Cell Classifier:   {self.classifier_acc[-1]:.3f}\n"
-                f"• Region Classifier: {self.region_acc[-1]:.3f}\n"
                 f"• Silhouette (cos):  {sil_val:.3f}\n"
                 f"• Active Codes:      {self.active_codes[-1]}/{512 if self.codebook_snapshots else '?'}\n"
                 f"• Temperature τ:     {self.tau_f[-1]:.3f}\n\n"
@@ -314,7 +317,6 @@ class TrainingDashboard:
             "train_vq":       self.train_vq,
             "val_vq":         self.val_vq,
             "classifier_acc": self.classifier_acc,
-            "region_acc":     self.region_acc,
             "silhouette":     self.silhouette,
             "compartment_r":  self.compartment_r,
             "active_codes":   self.active_codes,

@@ -19,7 +19,7 @@ from masker import VanillaMasker
 from codebook import EMAVectorQuantizer
 from transformer import TransformerDemasker
 from decoder import CNNDecoder
-from heads import ContactReconHead, BoundaryHead, CompartmentHead, CellClassifierHead, RegionClassifierHead
+from heads import ContactReconHead, BoundaryHead, CompartmentHead, CellClassifierHead
 
 
 class MQVAE(nn.Module):
@@ -46,10 +46,7 @@ class MQVAE(nn.Module):
         use_boundary_head:    bool  = True,
         use_compartment_head: bool  = True,
         use_classifier_head:  bool  = True,
-        use_region_head:      bool  = True,
         n_cell_types:         int   = None,
-        n_chroms:             int   = None,
-        n_bins:               int   = None,
         use_masking:          bool  = True,
         use_film:             bool  = True,
         # Explicit architecture overrides (for small-model tests)
@@ -65,7 +62,6 @@ class MQVAE(nn.Module):
         self.use_boundary_head    = use_boundary_head
         self.use_compartment_head = use_compartment_head
         self.use_classifier_head  = use_classifier_head
-        self.use_region_head      = use_region_head
 
         # Resolve dims — explicit args take precedence over config
         n_codes      = n_codes      if n_codes      is not None else _cfg.N_CODES
@@ -73,8 +69,6 @@ class MQVAE(nn.Module):
         fp_dim       = fp_dim       if fp_dim       is not None else _cfg.FP_DIM
         keep_ratio   = keep_ratio   if keep_ratio   is not None else _cfg.KEEP_RATIO
         n_cell_types = n_cell_types if n_cell_types is not None else _cfg.N_CELL_TYPES
-        n_chroms     = n_chroms     if n_chroms     is not None else _cfg.N_CHROMS
-        n_bins       = n_bins       if n_bins       is not None else _cfg.N_GENOMIC_BINS
         enc_ch     = encoder_channels     or _cfg.ENCODER_CHANNELS
         n_layers   = n_transformer_layers or _cfg.N_TRANSFORMER_LAYERS
         n_h        = n_heads              or _cfg.N_HEADS
@@ -89,9 +83,7 @@ class MQVAE(nn.Module):
             use_boundary_head=use_boundary_head,
             use_compartment_head=use_compartment_head,
             use_classifier_head=use_classifier_head,
-            use_region_head=use_region_head,
             n_cell_types=n_cell_types,
-            n_chroms=n_chroms, n_bins=n_bins,
             use_masking=use_masking, use_film=use_film,
         )
 
@@ -114,9 +106,6 @@ class MQVAE(nn.Module):
         self.classifier_head  = CellClassifierHead(
             in_dim=code_dim, n_classes=n_cell_types
         ) if use_classifier_head else None
-        self.region_head      = RegionClassifierHead(
-            in_dim=code_dim, n_chroms=n_chroms, n_bins=n_bins
-        ) if use_region_head else None
 
     # ── Temperature control (called by trainer each epoch) ────────────────────
 
@@ -195,11 +184,6 @@ class MQVAE(nn.Module):
 
         if self.use_classifier_head and self.classifier_head is not None:
             out["cell_logits"] = self.classifier_head(z_e_mean)    # [B, n_cell_types]
-
-        if self.use_region_head and self.region_head is not None:
-            chrom_logits, bin_logits = self.region_head(z_e_mean)
-            out["chrom_logits"] = chrom_logits                     # [B, n_chroms]
-            out["bin_logits"]   = bin_logits                       # [B, n_bins]
 
         return out
 
