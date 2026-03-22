@@ -1,0 +1,69 @@
+────────────────────────────────────────────────────────────────── END-TO-END ACCURACY TEST ──────────────────────────────────────────────────────────────────
+
+  Testing 10 cell lines: GM12878, H1, H9, HAP-1, HCT116, HeLa-S3, HepG2, IMR-90, K562, KBM-7
+
+──── Building Reference Index ──────────────────────────
+  ✓ 70600 reference tiles from 66 cell lines
+
+──── Classification Accuracy Test ──────────────────────
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers

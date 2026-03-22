@@ -1,0 +1,92 @@
+───────────────────────────────────────────────────────────────── CHROMATIN STRUCTURAL QUERY ─────────────────────────────────────────────────────────────────
+
+──── Loading Model ─────────────────────────────────────
+╭─────────────┬─────────────────────────╮
+│ Parameter   │ Value                   │
+├─────────────┼─────────────────────────┤
+│ Input File  │ K562_4DNFI18UHVRO.mcool │
+│ Cell Line   │ K562                    │
+│ File Size   │ 7.92 GB                 │
+│ Model Epoch │ 181                     │
+│ Device      │ CUDA                    │
+╰─────────────┴─────────────────────────╯
+
+──── Extracting Fingerprints ───────────────────────────
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+⠸ Done — 198 tiles extracted 0:03:51
+  ✓ Extracted 198 tiles
+
+──── Loading Reference Database ────────────────────────
+  Building reference fingerprint index from processed tiles...
+  ✓ Reference: 70600 tiles from 66 cell lines
+
+──── Computing Structural Similarity ───────────────────
+╭─────┬─────────────┬──────────────┬──────────────────┬───────────────┬────────────┬─────────╮
+│   # │ Cell Type   │   Similarity │ Visual           │ Confidence    │   Loci Won │         │
+├─────┼─────────────┼──────────────┼──────────────────┼───────────────┼────────────┼─────────┤
+│   1 │ K562        │       0.9996 │ ████████████████ │ VERY HIGH ★★★ │        166 │ ★ MATCH │
+│   2 │ HCT116      │       0.9985 │ ████████████████ │ VERY HIGH ★★★ │          5 │         │
+│   3 │ HeLa-S3     │       0.9981 │ ████████████████ │ VERY HIGH ★★★ │          2 │         │
+│   4 │ GM12878     │       0.9981 │ ████████████████ │ VERY HIGH ★★★ │          2 │         │
+│   5 │ HAP-1       │       0.998  │ ████████████████ │ VERY HIGH ★★★ │          7 │         │
+╰─────┴─────────────┴──────────────┴──────────────────┴───────────────┴────────────┴─────────╯
+
+──── Divergent Loci (vs. K562) ─────────────────────────
+╭────────────────────┬──────────────┬───────────╮
+│ Locus              │   Similarity │   Z-score │
+├────────────────────┼──────────────┼───────────┤
+│ chr13:0.0M-25.0M   │       0.9917 │     -8.3  │
+│ chr21:0.0M-25.0M   │       0.9955 │     -4.37 │
+│ chr1:115.0M-140.0M │       0.9962 │     -3.54 │
+│ chr17:25.0M-51.0M  │       0.9968 │     -2.93 │
+│ chr4:25.0M-51.0M   │       0.9971 │     -2.58 │
+│ chr9:25.0M-51.0M   │       0.9973 │     -2.44 │
+│ chr16:25.0M-51.0M  │       0.9975 │     -2.19 │
+│ chr15:12.0M-38.0M  │       0.9977 │     -2.04 │
+│ chr5:25.0M-51.0M   │       0.9977 │     -1.99 │
+│ chr11:51.0M-76.0M  │       0.9977 │     -1.95 │
+╰────────────────────┴──────────────┴───────────╯
+
+──── Regulatory Landscape — K562 vs K562 (cCRE) ────────
+╭─────────────────┬─────────┬─────────┬──────────────╮
+│ cCRE Category   │    K562 │    K562 │ Difference   │
+├─────────────────┼─────────┼─────────┼──────────────┤
+│ CA-only         │  103613 │  103613 │ =            │
+│ Low-DNase       │ 2241840 │ 2241840 │ =            │
+╰─────────────────┴─────────┴─────────┴──────────────╯
+
+──── Summary ───────────────────────────────────────────
+╭─────────────────┬───────────────╮
+│ Metric          │ Value         │
+├─────────────────┼───────────────┤
+│ Top Match       │ K562          │
+│ Top Similarity  │ 0.9996        │
+│ Confidence      │ VERY HIGH ★★★ │
+│ Tiles Analyzed  │ 198           │
+│ Reference Lines │ 66            │
+│ Processing Time │ 538.2s        │
+╰─────────────────┴───────────────╯
+
+  ✓ Results saved → /data/joshi/Generative_experiment/Chromatin-DB/trash/experiments/K562_result.json

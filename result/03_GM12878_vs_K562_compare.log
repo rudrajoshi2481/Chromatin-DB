@@ -1,0 +1,139 @@
+──────────────────────────────────────────────────────────────── DIRECT STRUCTURAL COMPARISON ────────────────────────────────────────────────────────────────
+╭──────────┬────────────────────────────┬─────────────┬─────────╮
+│          │ File                       │ Cell Line   │ Size    │
+├──────────┼────────────────────────────┼─────────────┼─────────┤
+│ Sample A │ GM12878_4DNFI2A4OBS9.mcool │ GM12878     │ 0.04 GB │
+│ Sample B │ K562_4DNFI18UHVRO.mcool    │ K562        │ 7.92 GB │
+╰──────────┴────────────────────────────┴─────────────┴─────────╯
+
+──── Extracting Fingerprints ───────────────────────────
+INFO:root:creating a Pool of 4 workers
+  Processing GM12878...
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+  Processing K562...
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+  ✓ 195 tiles from A,  198 tiles from B
+
+──── Fingerprint Similarity (Structural) ───────────────
+╭───────────────────┬─────────┬──────────────────┬───────────────╮
+│ Metric            │ Value   │ Visual           │ Confidence    │
+├───────────────────┼─────────┼──────────────────┼───────────────┤
+│ Mean Similarity   │ 0.8264  │ █████████████░░░ │ HIGH     ★★☆  │
+│ Max Similarity    │ 0.9882  │ ████████████████ │ VERY HIGH ★★★ │
+│ Loci > 0.85 match │ 100.0%  │ ████████████████ │               │
+╰───────────────────┴─────────┴──────────────────┴───────────────╯
+
+──── Per-Chromosome Similarity ─────────────────────────
+╭─────────┬──────────────┬──────────────┬───────────╮
+│ Chrom   │   Similarity │ Visual       │   # Tiles │
+├─────────┼──────────────┼──────────────┼───────────┤
+│ chr1    │       0.9541 │ ███████████░ │        16 │
+│ chr2    │       0.9401 │ ███████████░ │        17 │
+│ chr3    │       0.9358 │ ███████████░ │        14 │
+│ chr4    │       0.9447 │ ███████████░ │        13 │
+│ chr5    │       0.9457 │ ███████████░ │        13 │
+│ chr6    │       0.9451 │ ███████████░ │        12 │
+│ chr7    │       0.9442 │ ███████████░ │        11 │
+│ chr8    │       0.9386 │ ███████████░ │        10 │
+│ chr9    │       0.9597 │ ████████████ │         8 │
+│ chr10   │       0.9503 │ ███████████░ │         9 │
+│ chr11   │       0.9355 │ ███████████░ │         9 │
+│ chr12   │       0.9393 │ ███████████░ │         9 │
+│ chr13   │       0.9333 │ ███████████░ │         6 │
+│ chr14   │       0.9482 │ ███████████░ │         6 │
+│ chr15   │       0.9444 │ ███████████░ │         5 │
+│ chr16   │       0.9519 │ ███████████░ │         6 │
+│ chr17   │       0.9582 │ ███████████░ │         5 │
+│ chr18   │       0.9183 │ ███████████░ │         5 │
+│ chr19   │       0.9476 │ ███████████░ │         3 │
+│ chr20   │       0.9496 │ ███████████░ │         4 │
+│ chr21   │       0.9749 │ ████████████ │         2 │
+│ chr22   │       0.9557 │ ███████████░ │         1 │
+│ chrX    │       0.9652 │ ████████████ │        11 │
+╰─────────┴──────────────┴──────────────┴───────────╯
+
+──── Regulatory Landscape (cCRE): GM12878 vs K562 ──────
+  Loading cCRE files...
+╭─────────────────┬───────────┬─────────┬──────────────╮
+│ cCRE Category   │   GM12878 │    K562 │ Difference   │
+├─────────────────┼───────────┼─────────┼──────────────┤
+│ PLS             │     19452 │       0 │ +19452 ▲     │
+│ pELS            │     35508 │       0 │ +35508 ▲     │
+│ dELS            │     34888 │       0 │ +34888 ▲     │
+│ CA-CTCF         │     12662 │       0 │ +12662 ▲     │
+│ CA-TF           │     14221 │       0 │ +14221 ▲     │
+│ CA-H3K4me3      │      8908 │       0 │ +8908 ▲      │
+│ CA-only         │      3623 │  103613 │ -99990 ▼     │
+│ Low-DNase       │   2216191 │ 2241840 │ -25649 ▼     │
+╰─────────────────┴───────────┴─────────┴──────────────╯
+
+  Total cCREs — GM12878: 2,345,453   K562: 2,345,453
+
+──── Most Divergent Loci (A differs from B) ────────────
+╭─────────────┬──────────────┬───────────╮
+│ Locus       │   Similarity │   Z-score │
+├─────────────┼──────────────┼───────────┤
+│ chr11:51.0M │       0.8979 │     -2.13 │
+│ chr1:153.0M │       0.9091 │     -1.63 │
+│ chr18:12.0M │       0.91   │     -1.59 │
+│ chr6:12.0M  │       0.9118 │     -1.51 │
+│ chr1:25.0M  │       0.9139 │     -1.42 │
+│ chr3:38.0M  │       0.9144 │     -1.39 │
+│ chr14:51.0M │       0.9153 │     -1.35 │
+│ chr6:25.0M  │       0.9155 │     -1.35 │
+│ chr8:12.0M  │       0.916  │     -1.32 │
+│ chr3:25.0M  │       0.9161 │     -1.32 │
+╰─────────────┴──────────────┴───────────╯
+
+──── Summary ───────────────────────────────────────────
+╭─────────────────┬─────────╮
+│ Metric          │ Value   │
+├─────────────────┼─────────┤
+│ Sample A        │ GM12878 │
+│ Sample B        │ K562    │
+│ Mean Similarity │ 0.8264  │
+│ Verdict         │ SIMILAR │
+╰─────────────────┴─────────╯

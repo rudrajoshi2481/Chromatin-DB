@@ -1,0 +1,98 @@
+───────────────────────────────────────────────────────────────── CHROMATIN STRUCTURAL QUERY ─────────────────────────────────────────────────────────────────
+
+──── Loading Model ─────────────────────────────────────
+╭─────────────┬────────────────────────────╮
+│ Parameter   │ Value                      │
+├─────────────┼────────────────────────────┤
+│ Input File  │ GM12878_4DNFI2A4OBS9.mcool │
+│ Cell Line   │ GM12878                    │
+│ File Size   │ 0.04 GB                    │
+│ Model Epoch │ 181                        │
+│ Device      │ CUDA                       │
+╰─────────────┴────────────────────────────╯
+
+──── Extracting Fingerprints ───────────────────────────
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+INFO:root:creating a Pool of 4 workers
+⠧ Done — 195 tiles extracted 0:00:20
+  ✓ Extracted 195 tiles
+
+──── Loading Reference Database ────────────────────────
+  Building reference fingerprint index from processed tiles...
+  ✓ Reference: 70600 tiles from 66 cell lines
+
+──── Computing Structural Similarity ───────────────────
+╭─────┬────────────────────────┬──────────────┬──────────────────┬───────────────┬────────────┬─────────╮
+│   # │ Cell Type              │   Similarity │ Visual           │ Confidence    │   Loci Won │         │
+├─────┼────────────────────────┼──────────────┼──────────────────┼───────────────┼────────────┼─────────┤
+│   1 │ GM12878                │       0.9994 │ ████████████████ │ VERY HIGH ★★★ │        170 │ ★ MATCH │
+│   2 │ HCT116                 │       0.9971 │ ████████████████ │ VERY HIGH ★★★ │         13 │         │
+│   3 │ dTAG-NIPBL_hTERT-RPE-1 │       0.9966 │ ████████████████ │ VERY HIGH ★★★ │          8 │         │
+│   4 │ HeLa-S3                │       0.9947 │ ████████████████ │ VERY HIGH ★★★ │          3 │         │
+│   5 │ K562                   │       0.9939 │ ████████████████ │ VERY HIGH ★★★ │          0 │         │
+╰─────┴────────────────────────┴──────────────┴──────────────────┴───────────────┴────────────┴─────────╯
+
+──── Divergent Loci (vs. GM12878) ──────────────────────
+╭────────────────────┬──────────────┬───────────╮
+│ Locus              │   Similarity │   Z-score │
+├────────────────────┼──────────────┼───────────┤
+│ chr1:140.0M-166.0M │       0.9924 │     -5.49 │
+│ chr16:25.0M-51.0M  │       0.9941 │     -4.12 │
+│ chr9:25.0M-51.0M   │       0.9944 │     -3.89 │
+│ chr11:51.0M-76.0M  │       0.9949 │     -3.46 │
+│ chr6:38.0M-64.0M   │       0.9951 │     -3.3  │
+│ chr20:25.0M-51.0M  │       0.9957 │     -2.85 │
+│ chr4:38.0M-64.0M   │       0.9959 │     -2.74 │
+│ chr4:25.0M-51.0M   │       0.9962 │     -2.49 │
+│ chr21:0.0M-25.0M   │       0.9963 │     -2.41 │
+│ chr13:12.0M-38.0M  │       0.9968 │     -2.04 │
+╰────────────────────┴──────────────┴───────────╯
+
+──── Regulatory Landscape — GM12878 vs GM12878 (cCRE) ──
+╭─────────────────┬───────────┬───────────┬──────────────╮
+│ cCRE Category   │   GM12878 │   GM12878 │ Difference   │
+├─────────────────┼───────────┼───────────┼──────────────┤
+│ PLS             │     19452 │     19452 │ =            │
+│ pELS            │     35508 │     35508 │ =            │
+│ dELS            │     34888 │     34888 │ =            │
+│ CA-CTCF         │     12662 │     12662 │ =            │
+│ CA-TF           │     14221 │     14221 │ =            │
+│ CA-H3K4me3      │      8908 │      8908 │ =            │
+│ CA-only         │      3623 │      3623 │ =            │
+│ Low-DNase       │   2216191 │   2216191 │ =            │
+╰─────────────────┴───────────┴───────────┴──────────────╯
+
+──── Summary ───────────────────────────────────────────
+╭─────────────────┬───────────────╮
+│ Metric          │ Value         │
+├─────────────────┼───────────────┤
+│ Top Match       │ GM12878       │
+│ Top Similarity  │ 0.9994        │
+│ Confidence      │ VERY HIGH ★★★ │
+│ Tiles Analyzed  │ 195           │
+│ Reference Lines │ 66            │
+│ Processing Time │ 333.8s        │
+╰─────────────────┴───────────────╯
+
+  ✓ Results saved → /data/joshi/Generative_experiment/Chromatin-DB/trash/experiments/GM12878_result.json
