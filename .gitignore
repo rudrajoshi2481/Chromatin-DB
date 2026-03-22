@@ -20,14 +20,16 @@ wheels/
 .installed.cfg
 *.egg
 MANIFEST
+venv/
 
 # ── Jupyter ───────────────────────────────────────────────────────────
 .ipynb_checkpoints/
 
 # ── Data & Outputs ───────────────────────────────────────────────────
-# Training outputs
+# Training outputs - ignore entire runs/ folder (avoid LFS issues)
+# Logs are copied to root for tracking
 trash/
-checkpoints/
+runs/
 *.duckdb
 *.faiss
 *.locus_keys.json

@@ -3,7 +3,7 @@ model.py — Full MQ-VAE assembly.
 
 Pipeline:
   Encoder → VanillaMasker → EMAVectorQuantizer → TransformerDemasker
-         → CNNDecoder → [ContactReconHead, BoundaryHead, CompartmentHead]
+         → CNNDecoder → [ContactReconHead, CellClassifierHead]
 
 forward() returns a dict with all outputs needed by loss.py.
 encode_fingerprint() returns [B, 32] fp for database ingestion.
@@ -19,7 +19,7 @@ from masker import VanillaMasker
 from codebook import EMAVectorQuantizer
 from transformer import TransformerDemasker
 from decoder import CNNDecoder
-from heads import ContactReconHead, BoundaryHead, CompartmentHead, CellClassifierHead
+from heads import ContactReconHead, CellClassifierHead
 
 
 class MQVAE(nn.Module):
@@ -27,10 +27,8 @@ class MQVAE(nn.Module):
     Masked Quantized Variational Autoencoder for Hi-C structural fingerprinting.
 
     Ablation flags:
-      use_boundary_head   — include TAD boundary prediction head
-      use_compartment_head — include A/B compartment prediction head
-      use_masking         — if False, all tokens are passed to VQ (no masking)
-      use_film            — if False, assay embedding is zero (ablate FiLM)
+      use_masking  — if False, all tokens are passed to VQ (no masking)
+      use_film     — if False, assay embedding is zero (ablate FiLM)
     """
 
     @property
@@ -39,16 +37,14 @@ class MQVAE(nn.Module):
 
     def __init__(
         self,
-        n_codes:              int   = None,
-        code_dim:             int   = None,
-        fp_dim:               int   = None,
-        keep_ratio:           float = None,
-        use_boundary_head:    bool  = True,
-        use_compartment_head: bool  = True,
-        use_classifier_head:  bool  = True,
-        n_cell_types:         int   = None,
-        use_masking:          bool  = True,
-        use_film:             bool  = True,
+        n_codes:             int   = None,
+        code_dim:            int   = None,
+        fp_dim:              int   = None,
+        keep_ratio:          float = None,
+        use_classifier_head: bool  = True,
+        n_cell_types:        int   = None,
+        use_masking:         bool  = True,
+        use_film:            bool  = True,
         # Explicit architecture overrides (for small-model tests)
         encoder_channels:     list  = None,
         n_transformer_layers: int   = None,
@@ -57,11 +53,9 @@ class MQVAE(nn.Module):
         decoder_channels:     list  = None,
     ):
         super().__init__()
-        self.use_masking          = use_masking
-        self.use_film             = use_film
-        self.use_boundary_head    = use_boundary_head
-        self.use_compartment_head = use_compartment_head
-        self.use_classifier_head  = use_classifier_head
+        self.use_masking         = use_masking
+        self.use_film            = use_film
+        self.use_classifier_head = use_classifier_head
 
         # Resolve dims — explicit args take precedence over config
         n_codes      = n_codes      if n_codes      is not None else _cfg.N_CODES
@@ -80,8 +74,6 @@ class MQVAE(nn.Module):
             n_codes=n_codes, code_dim=code_dim, fp_dim=fp_dim,
             keep_ratio=keep_ratio, enc_ch=enc_ch, n_layers=n_layers,
             n_h=n_h, ffn=ffn, dec_ch=dec_ch,
-            use_boundary_head=use_boundary_head,
-            use_compartment_head=use_compartment_head,
             use_classifier_head=use_classifier_head,
             n_cell_types=n_cell_types,
             use_masking=use_masking, use_film=use_film,
@@ -100,10 +92,8 @@ class MQVAE(nn.Module):
         )
         self.decoder    = CNNDecoder(in_channels=code_dim, stage_channels=dec_ch)
 
-        self.contact_head     = ContactReconHead(in_channels=dec_ch[-1])
-        self.boundary_head    = BoundaryHead(in_channels=dec_ch[-1])    if use_boundary_head    else None
-        self.compartment_head = CompartmentHead(in_channels=dec_ch[-1]) if use_compartment_head else None
-        self.classifier_head  = CellClassifierHead(
+        self.contact_head    = ContactReconHead(in_channels=dec_ch[-1])
+        self.classifier_head = CellClassifierHead(
             in_dim=code_dim, n_classes=n_cell_types
         ) if use_classifier_head else None
 
@@ -124,14 +114,13 @@ class MQVAE(nn.Module):
         assay_id: [B]  (int64)
 
         Returns dict with keys:
-          contact_recon      [B, 1, 256, 256]
-          boundary_logits    [B, 256]          (if use_boundary_head)
-          compartment        [B, 256]          (if use_compartment_head)
-          z_e                [B, K, D]         encoder outputs at visible positions
-          z_q                [B, K, D]         quantized (stopped gradient for loss)
-          commit_loss        scalar
-          indices            [B, K]
-          fingerprint        [B, fp_dim]
+          contact_recon  [B, 1, 256, 256]
+          z_e            [B, K, D]  encoder outputs at visible positions
+          z_q            [B, K, D]  quantized (stopped gradient for loss)
+          commit_loss    scalar
+          indices        [B, K]
+          fingerprint    [B, fp_dim]
+          cell_logits    [B, n_cell_types]  (if use_classifier_head)
         """
         # ── 1. Encode ─────────────────────────────────────────────────────────
         if not self.use_film:
@@ -168,19 +157,12 @@ class MQVAE(nn.Module):
 
         out = {
             "contact_recon": contact_recon,
-            "z_e":           z_vis,                       # encoder outputs
+            "z_e":           z_vis,                       # encoder outputs  [B, K, D]
             "z_e_mean":      z_e_mean,                    # [B, D] for classifier
-            "z_q":           z_q_st.detach(),             # stopped for loss
-            "commit_loss":   commit_loss,
+            "z_q":           z_q_st.detach(),             # stopped for loss  [B, K, D]
             "indices":       indices,
             "fingerprint":   fingerprint,
         }
-
-        if self.use_boundary_head and self.boundary_head is not None:
-            out["boundary_logits"] = self.boundary_head(feat_2d)   # [B, 256]
-
-        if self.use_compartment_head and self.compartment_head is not None:
-            out["compartment"] = self.compartment_head(feat_2d)    # [B, 256]
 
         if self.use_classifier_head and self.classifier_head is not None:
             out["cell_logits"] = self.classifier_head(z_e_mean)    # [B, n_cell_types]
@@ -222,4 +204,7 @@ class MQVAE(nn.Module):
     # ── Active code count (logging) ───────────────────────────────────────────
 
     def active_codes(self) -> int:
-        return int((self.vq.usage_count > 0).sum().item())
+        return int((self.vq.epoch_usage_count > 0).sum().item())
+
+    def reset_epoch_usage(self) -> None:
+        self.vq.epoch_usage_count.zero_()

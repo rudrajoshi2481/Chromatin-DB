@@ -1,12 +1,11 @@
 """
-loss.py — Multi-head loss with auxiliary warmup schedule.
+loss.py — Streamlined loss for MQ-VAE structural fingerprinting.
 
-L_total = 1.0  * L_recon
-        + 0.25 * L_vq
-        + aux_w * 0.5  * L_boundary
-        + aux_w * 0.75 * L_compartment
+L_total = LOSS_W_RECON      * L_recon
+        + LOSS_W_VQ         * L_vq
+        + LOSS_W_CLASSIFIER * L_classifier
 
-aux_w ramps 0→1 over epochs 5–15 (warmup_epochs=5, ramp_epochs=10).
+No boundary, compartment, or region losses.
 """
 
 import torch
@@ -14,10 +13,7 @@ import torch.nn.functional as F
 from typing import Dict, Tuple
 
 from config import (
-    POS_WEIGHT_BOUNDARY,
-    LOSS_W_RECON, LOSS_W_VQ, LOSS_W_BOUNDARY, LOSS_W_COMPARTMENT,
-    LOSS_W_CLASSIFIER,
-    AUX_WARMUP_EPOCHS, AUX_RAMP_EPOCHS,
+    LOSS_W_RECON, LOSS_W_VQ, LOSS_W_CLASSIFIER,
 )
 
 
@@ -43,36 +39,19 @@ def pearson_2d(x: torch.Tensor, y: torch.Tensor) -> torch.Tensor:
     return pearson_1d(x.flatten(1), y.flatten(1))
 
 
-# ── Auxiliary Weight Schedule ─────────────────────────────────────────────────
-
-def aux_weight(epoch: int, warmup: int = AUX_WARMUP_EPOCHS, ramp: int = AUX_RAMP_EPOCHS) -> float:
-    """
-    Epochs 0–(warmup-1):        0.0  (reconstruction + VQ only)
-    Epochs warmup–(warmup+ramp): linear 0.0 → 1.0
-    Epochs warmup+ramp+:        1.0
-    """
-    if epoch < warmup:
-        return 0.0
-    elif epoch < warmup + ramp:
-        return (epoch - warmup) / ramp
-    else:
-        return 1.0
-
-
-# ── Total Loss ────────────────────────────────────────────────────────────────
+# ── Total Loss ───────────────────────────────────────────────────────────────────
 
 def total_loss(
-    outputs:   Dict[str, torch.Tensor],
-    targets:   Dict[str, torch.Tensor],
-    epoch:     int,
-    cell_idx:  torch.Tensor = None,
+    outputs:  Dict[str, torch.Tensor],
+    targets:  Dict[str, torch.Tensor],
+    epoch:    int,
+    cell_idx: torch.Tensor = None,
 ) -> Tuple[torch.Tensor, Dict[str, float]]:
     """
-    Compute multi-head training loss.
+    Compute streamlined training loss: reconstruction + VQ + cell classifier.
 
-    outputs keys: contact_recon, boundary_logits (optional), compartment (optional),
-                  z_e, z_q, commit_loss
-    targets keys: contact, boundary, compartment
+    outputs keys: contact_recon, z_e, z_q, cell_logits (optional)
+    targets keys: contact
 
     Returns (loss_tensor, metrics_dict)
     """
@@ -95,32 +74,7 @@ def total_loss(
         z_q = outputs["z_q"]
         L_vq = F.mse_loss(z_e, z_q.detach())
 
-    # ── Head 2: TAD Boundary detection ───────────────────────────────────────
-    L_boundary   = torch.tensor(0.0, device=device)
-    has_boundary = "boundary_logits" in outputs and "boundary" in targets
-    if has_boundary:
-        bd_logits = outputs["boundary_logits"]     # [B, 256] raw logits
-        bd_true   = targets["boundary"]            # [B, 256]
-        pos_w     = torch.tensor(POS_WEIGHT_BOUNDARY, device=device)
-        L_boundary = F.binary_cross_entropy_with_logits(
-            bd_logits, bd_true, pos_weight=pos_w
-        )
-
-    # ── Head 3: A/B Compartment score ────────────────────────────────────────
-    L_compartment   = torch.tensor(0.0, device=device)
-    compartment_r   = 0.0
-    has_compartment = "compartment" in outputs and "compartment" in targets
-    if has_compartment:
-        comp_pred = outputs["compartment"]         # [B, 256]
-        comp_true = targets["compartment"]         # [B, 256]
-        L_compartment = (
-            F.mse_loss(comp_pred, comp_true)
-            + 0.5 * (1.0 - pearson_1d(comp_pred, comp_true))
-        )
-        with torch.no_grad():
-            compartment_r = float(pearson_1d(comp_pred, comp_true).item())
-
-    # ── Head 4: Cell-type patch classifier ──────────────────────────────────────
+    # ── Head 2: Cell-type patch classifier ────────────────────────────────────────
     L_classifier  = torch.tensor(0.0, device=device)
     classifier_acc = 0.0
     has_classifier = (
@@ -135,13 +89,10 @@ def total_loss(
             preds = logits.argmax(dim=1)
             classifier_acc = float((preds == cell_idx).float().mean().item())
 
-    # ── Weighted total ─────────────────────────────────────────────────────────────
-    aux_w = aux_weight(epoch)
+    # ── Weighted total ─────────────────────────────────────────────────────────────────────
     L_total = (
-        LOSS_W_RECON        * L_recon
-        + LOSS_W_VQ         * L_vq
-        + aux_w * LOSS_W_BOUNDARY    * L_boundary
-        + aux_w * LOSS_W_COMPARTMENT * L_compartment
+        LOSS_W_RECON      * L_recon
+        + LOSS_W_VQ       * L_vq
         + LOSS_W_CLASSIFIER * L_classifier
     )
 
@@ -149,11 +100,8 @@ def total_loss(
         "total":          float(L_total.item()),
         "recon":          float(L_recon.item()),
         "vq":             float(L_vq.item()),
-        "compartment":    float(L_compartment.item()),
         "classifier":     float(L_classifier.item()),
         "classifier_acc": classifier_acc,
-        "compartment_r":  compartment_r,
-        "aux_weight":     aux_w,
     }
 
     return L_total, metrics

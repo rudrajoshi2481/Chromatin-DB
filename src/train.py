@@ -15,6 +15,7 @@ import json
 import time
 from pathlib import Path
 
+import numpy as np
 import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader
@@ -24,13 +25,16 @@ from tqdm import tqdm
 sys.path.insert(0, str(Path(__file__).parent))
 
 from config import (
-    CHECKPOINTS_DIR, TRASH_DIR, PLOTS_DIR, CELL_LINE_REGISTRY,
+    CHECKPOINTS_DIR, TRASH_DIR, PLOTS_DIR, PROCESSED_DIR, CELL_LINE_REGISTRY,
     BATCH_SIZE, NUM_EPOCHS, LR, BETAS, WEIGHT_DECAY,
-    GRAD_CLIP, WARMUP_STEPS, NUM_WORKERS, SEED,
-    LOG_EVERY_N_STEPS, SAVE_EVERY_N_EPOCHS,
+    GRAD_CLIP, WARMUP_STEPS, MIN_STEPS_PER_EPOCH, NUM_WORKERS, SEED,
+    LOG_EVERY_N_STEPS, SAVE_EVERY_N_EPOCHS, PROJECT_ROOT,
     MCOOL_DIR, CCRE_REGISTRY,
 )
-from dataset import build_dataloaders
+
+RUNS_DIR = PROJECT_ROOT / "runs"
+
+from dataset import build_dataloaders, build_dataloaders_h5, build_dataloaders_dat, load_cell_line_label_map
 from model import MQVAE
 from loss import total_loss
 from masker import get_tau_f
@@ -61,19 +65,22 @@ def train_one_epoch(
     log_every: int = LOG_EVERY_N_STEPS,
 ) -> dict:
     model.train()
-    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","compartment_r"]}
+    running = {k: 0.0 for k in ["total", "recon", "vq", "classifier", "classifier_acc"]}
     n_steps = 0
+    all_indices: set = set()  # collect unique codebook indices across all batches
 
     pbar = tqdm(loader, desc=f"Epoch {epoch:02d} [train]", leave=False)
     for batch in pbar:
-        contact     = batch["contact"].to(device)        # [B, 1, 256, 256]
-        boundary    = batch["boundary"].to(device)       # [B, 256]
-        compartment = batch["compartment"].to(device)    # [B, 256]
-        assay_id    = batch["assay_id"].to(device)       # [B]
-        cell_idx    = batch["cell_idx"].to(device)       # [B] unique int per cell line
+        contact  = batch["contact"].to(device)   # [B, 1, 256, 256]
+        assay_id = batch["assay_id"].to(device)  # [B]
+        cell_idx = batch["cell_idx"].to(device)  # [B] unique int per cell line
 
         outputs = model(contact, assay_id)
-        targets = {"contact": contact, "boundary": boundary, "compartment": compartment}
+        targets = {"contact": contact}
+
+        # Accumulate unique code indices (works correctly with DataParallel)
+        if "indices" in outputs and outputs["indices"] is not None:
+            all_indices.update(outputs["indices"].reshape(-1).unique().cpu().tolist())
 
         loss, metrics = total_loss(outputs, targets, epoch, cell_idx)
 
@@ -94,7 +101,9 @@ def train_one_epoch(
                 cls=f"{metrics['classifier_acc']:.2f}",
             )
 
-    return {k: v / max(n_steps, 1) for k, v in running.items()}
+    result = {k: v / max(n_steps, 1) for k, v in running.items()}
+    result["active_codes"] = len(all_indices)  # definitive count, unaffected by DataParallel
+    return result
 
 
 @torch.no_grad()
@@ -105,18 +114,16 @@ def validate(
     device: torch.device,
 ) -> dict:
     model.eval()
-    running = {k: 0.0 for k in ["total","recon","vq","compartment","classifier","classifier_acc","compartment_r"]}
+    running = {k: 0.0 for k in ["total", "recon", "vq", "classifier", "classifier_acc"]}
     n_steps = 0
 
     for batch in tqdm(loader, desc=f"Epoch {epoch:02d} [val]  ", leave=False):
-        contact     = batch["contact"].to(device)
-        boundary    = batch["boundary"].to(device)
-        compartment = batch["compartment"].to(device)
-        assay_id    = batch["assay_id"].to(device)
-        cell_idx    = batch["cell_idx"].to(device)
+        contact  = batch["contact"].to(device)
+        assay_id = batch["assay_id"].to(device)
+        cell_idx = batch["cell_idx"].to(device)
 
         outputs = model(contact, assay_id)
-        targets = {"contact": contact, "boundary": boundary, "compartment": compartment}
+        targets = {"contact": contact}
         _, metrics = total_loss(outputs, targets, epoch, cell_idx)
 
         for k in running:
@@ -142,85 +149,169 @@ def save_checkpoint(model, optimizer, scheduler, epoch, metrics, ckpt_dir: Path,
 
 
 def train(
-    cell_lines=None,
-    epochs:     int   = NUM_EPOCHS,
-    batch_size: int   = BATCH_SIZE,
-    lr:         float = LR,
-    device_str: str   = "auto",
-    run_name:   str   = "full",
-    ckpt_dir:   Path  = None,
-    plot_every: int   = 1,      # update dashboard every N epochs
+    cell_lines:    list   = None,
+    epochs:        int    = NUM_EPOCHS,
+    batch_size:    int    = BATCH_SIZE,
+    lr:            float  = LR,
+    device_str:    str    = "auto",
+    run_name:      str    = "full",
+    run_dir:       Path   = None,    # all outputs go here (overrides ckpt_dir/plots_dir)
+    ckpt_dir:      Path   = None,
+    plots_dir:     Path   = None,
+    plot_every:    int    = 1,
+    processed_dir: Path   = PROCESSED_DIR,
+    h5_path:       Path   = None,    # if set, use combined HDF5 instead of .npz dir
+    dat_path:      Path   = None,    # if set, use .dat memmap (fastest) — overrides h5_path
+    gpu_ids:       list   = None,    # e.g. [0,1,2,3,4,5,6,7]; None = all available
     # Ablation flags
-    use_boundary_head:    bool = True,
-    use_compartment_head: bool = True,
     use_classifier_head:  bool = True,
     use_masking:          bool = True,
     use_film:             bool = True,
-    n_codes:              int  = 512,
+    n_codes:              int  = None,   # None = use config.N_CODES
 ) -> dict:
     """
     Main training function. Returns dict of final validation metrics.
-    Writes dashboard PNG + JSON log every epoch.
+    All outputs (checkpoints, plots, logs) go into runs/<run_name>/ by default.
     """
+    from config import N_CODES as _DEFAULT_N_CODES
+    if n_codes is None:
+        n_codes = _DEFAULT_N_CODES
+    # ── Run directory: everything goes here ──────────────────────────────────
+    if run_dir is None:
+        run_dir = RUNS_DIR / run_name
+    run_dir = Path(run_dir)
+    run_dir.mkdir(parents=True, exist_ok=True)
+
     if ckpt_dir is None:
-        ckpt_dir = CHECKPOINTS_DIR / run_name
+        ckpt_dir = run_dir / "checkpoints"
+    if plots_dir is None:
+        plots_dir = run_dir / "plots"
+    plots_dir = Path(plots_dir)
     ckpt_dir.mkdir(parents=True, exist_ok=True)
+    plots_dir.mkdir(parents=True, exist_ok=True)
     TRASH_DIR.mkdir(parents=True, exist_ok=True)
-    PLOTS_DIR.mkdir(parents=True, exist_ok=True)
+
+    print(f"[train] Run directory: {run_dir}", flush=True)
 
     # ── Validate registry + print status ──────────────────────────────────────
     validated = validate_registry(CELL_LINE_REGISTRY, MCOOL_DIR, CCRE_REGISTRY)
     print_registry_status(validated)
 
-    # ── Device ────────────────────────────────────────────────────────────────
+    # ── Device + multi-GPU ────────────────────────────────────────────────────────
     if device_str == "auto":
         device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
     else:
         device = torch.device(device_str)
-    print(f"[train] Device: {device}  |  Run: {run_name}")
 
-    # ── Data ──────────────────────────────────────────────────────────────────
+    # Multi-GPU: wrap in DataParallel if multiple GPUs requested/available
+    n_gpus = torch.cuda.device_count() if torch.cuda.is_available() else 0
+    if gpu_ids is None and n_gpus > 1:
+        gpu_ids = list(range(n_gpus))
+    use_multi_gpu = (gpu_ids is not None and len(gpu_ids) > 1
+                     and torch.cuda.is_available())
+    print(f"[train] Device: {device}  |  GPUs: {gpu_ids if use_multi_gpu else 'single'}  |  Run: {run_name}")
+
+    # ── Data ─────────────────────────────────────────────────────────────────────────────
     # Filter to only active (non-skipped) samples
     active = active_samples(validated)
     if cell_lines:
         active = {k: v for k, v in active.items() if k in cell_lines}
 
+    # If cell_lines were given but none matched registry, use them as-is
+    # (allows pointing at a custom processed_dir with arbitrary sample names)
     active_cell_lines = list(active.keys()) if active else cell_lines
-    train_loader, val_loader = build_dataloaders(
-        cell_lines=active_cell_lines,
-        batch_size=batch_size,
-        num_workers=NUM_WORKERS,
-    )
-    total_steps  = epochs * max(len(train_loader), 1)
-    n_cell_types = len(active_cell_lines) if active_cell_lines else 16
 
-    # ── Model ───────────────────────────────────────────────────────────────────────
-    model = MQVAE(
-        n_codes              = n_codes,
-        use_boundary_head    = use_boundary_head,
-        use_compartment_head = use_compartment_head,
-        use_classifier_head  = use_classifier_head,
-        n_cell_types         = n_cell_types,
-        use_masking          = use_masking,
-        use_film             = use_film,
+    # Scale batch size with GPU count so each GPU sees batch_size samples.
+    effective_batch = batch_size * len(gpu_ids) if use_multi_gpu else batch_size
+
+    # ── Determine n_cell_types from label map (always use the JSON when present) ──
+    label_map = load_cell_line_label_map(processed_dir)
+    n_cell_types_from_map = len(label_map) if label_map else None
+
+    if dat_path is not None:
+        print(f"[train] Using .dat memmap: {dat_path}")
+        meta = np.load(str(dat_path) + "_meta.npz", allow_pickle=True)
+        n_train_tiles = int(meta["train_idx"].shape[0]) or int(meta["n_tiles"])
+        n_cell_types  = n_cell_types_from_map or (int(meta["cell_idxs"].max()) + 1)
+        effective_batch = min(effective_batch, max(batch_size, n_train_tiles // MIN_STEPS_PER_EPOCH))
+        train_loader, val_loader = build_dataloaders_dat(
+            dat_path    = dat_path,
+            batch_size  = effective_batch,
+            num_workers = NUM_WORKERS,
+        )
+    elif h5_path is not None:
+        print(f"[train] Using combined HDF5: {h5_path}")
+        import h5py as _h5py
+        with _h5py.File(str(h5_path), "r") as _hf:
+            n_train_tiles = int(_hf["train_idx"].shape[0]) if "train_idx" in _hf \
+                            else int(_hf["matrices"].shape[0])
+            n_cell_types  = n_cell_types_from_map or (int(_hf["cell_idxs"][:].max()) + 1)
+        effective_batch = min(effective_batch, max(batch_size, n_train_tiles // MIN_STEPS_PER_EPOCH))
+        train_loader, val_loader = build_dataloaders_h5(
+            h5_path     = h5_path,
+            batch_size  = effective_batch,
+            num_workers = NUM_WORKERS,
+        )
+    else:
+        # Pass cell_lines=None so HiCTileDataset auto-discovers all sample subdirs
+        # (dirs are full stems like GM12878_4DNFI..., not clean registry names)
+        # If user explicitly requested a subset, honour it; otherwise discover all.
+        explicit_cell_lines = cell_lines if cell_lines else None
+        train_loader, val_loader = build_dataloaders(
+            cell_lines    = explicit_cell_lines,
+            batch_size    = effective_batch,
+            num_workers   = NUM_WORKERS,
+            processed_dir = processed_dir,
+        )
+        n_cell_types  = n_cell_types_from_map or \
+                        (len(active_cell_lines) if active_cell_lines else 16)
+        n_train_tiles   = len(train_loader.dataset)
+        effective_batch = min(effective_batch, max(batch_size, n_train_tiles // MIN_STEPS_PER_EPOCH))
+        if effective_batch != (batch_size * len(gpu_ids) if use_multi_gpu else batch_size):
+            train_loader, val_loader = build_dataloaders(
+                cell_lines    = explicit_cell_lines,
+                batch_size    = effective_batch,
+                num_workers   = NUM_WORKERS,
+                processed_dir = processed_dir,
+            )
+    print(f"[train] Cell-line classifier: {n_cell_types} classes  "
+          f"(label map: {list(label_map.items())[:5]}{'...' if len(label_map)>5 else ''})",
+          flush=True)
+    print(f"[train] Effective batch size: {effective_batch} "
+          f"({len(train_loader)} steps/epoch)")
+    total_steps  = epochs * max(len(train_loader), 1)
+
+    # ── Model ──────────────────────────────────────────────────────────────────────────────────
+    base_model = MQVAE(
+        n_codes             = n_codes,
+        use_classifier_head = use_classifier_head,
+        n_cell_types        = n_cell_types,
+        use_masking         = use_masking,
+        use_film            = use_film,
     ).to(device)
 
-    n_params = sum(p.numel() for p in model.parameters() if p.requires_grad)
+    if use_multi_gpu:
+        model = nn.DataParallel(base_model, device_ids=gpu_ids)
+        print(f"[train] DataParallel across GPUs: {gpu_ids}")
+    else:
+        model = base_model
+
+    n_params = sum(p.numel() for p in base_model.parameters() if p.requires_grad)
     arch = {
-        "n_codes":              n_codes,
-        "use_boundary_head":    use_boundary_head,
-        "use_compartment_head": use_compartment_head,
-        "use_classifier_head":  use_classifier_head,
-        "n_cell_types":         n_cell_types,
-        "use_masking":          use_masking,
-        "use_film":             use_film,
+        "n_codes":             n_codes,
+        "use_classifier_head": use_classifier_head,
+        "n_cell_types":        n_cell_types,
+        "use_masking":         use_masking,
+        "use_film":            use_film,
+        "n_gpus":              len(gpu_ids) if use_multi_gpu else 1,
+        "cell_line_label_map": label_map,
     }
     print(f"[train] Model parameters: {n_params:,}")
     print(f"[train] Codebook: {n_codes} codes  |  Epochs: {epochs}")
 
-    # ── Optimizer + Scheduler ─────────────────────────────────────────────────
+    # ── Optimizer + Scheduler ─────────────────────────────────────────────────────────
     optimizer = torch.optim.AdamW(
-        model.parameters(), lr=lr, betas=BETAS, weight_decay=WEIGHT_DECAY
+        base_model.parameters(), lr=lr, betas=BETAS, weight_decay=WEIGHT_DECAY
     )
     scheduler = build_scheduler(
         optimizer,
@@ -229,7 +320,7 @@ def train(
     )
 
     # ── Dashboard ─────────────────────────────────────────────────────────────
-    dashboard = TrainingDashboard(run_name=run_name, out_dir=PLOTS_DIR)
+    dashboard = TrainingDashboard(run_name=run_name, out_dir=plots_dir)
 
     # ── Training Loop ─────────────────────────────────────────────────────────
     history       = []
@@ -239,7 +330,8 @@ def train(
 
     for epoch in range(epochs):
         tau_f = get_tau_f(epoch)
-        model.set_masker_temperatures(tau_f)
+        base_model.set_masker_temperatures(tau_f)
+        base_model.reset_epoch_usage()           # reset per-epoch codebook usage counter
 
         t0 = time.time()
         train_metrics = train_one_epoch(
@@ -248,8 +340,7 @@ def train(
         val_metrics = validate(model, val_loader, epoch, device)
         elapsed     = time.time() - t0
 
-        active_codes = model.active_codes()
-        train_metrics["active_codes"] = active_codes
+        active_codes = train_metrics.get("active_codes", 0)
 
         row = {
             "epoch":        epoch,
@@ -273,8 +364,8 @@ def train(
 
         # ── Per-epoch dashboard update ─────────────────────────────────────
         if (epoch + 1) % plot_every == 0:
-            fp_emb, fp_labels = collect_fingerprints(model, val_loader, device)
-            cb_usage          = collect_codebook_usage(model)
+            fp_emb, fp_labels = collect_fingerprints(base_model, val_loader, device)
+            cb_usage          = collect_codebook_usage(base_model)
             sil = compute_silhouette(fp_emb, fp_labels) if len(fp_emb) > 0 else 0.0
             val_metrics["silhouette"] = sil
             dashboard.update(
@@ -292,24 +383,24 @@ def train(
             best_val_loss = val_metrics["total"]
             best_epoch    = epoch
             save_checkpoint(
-                model, optimizer, scheduler, epoch, val_metrics, ckpt_dir,
+                base_model, optimizer, scheduler, epoch, val_metrics, ckpt_dir,
                 tag="best", arch=arch,
             )
 
         if (epoch + 1) % SAVE_EVERY_N_EPOCHS == 0:
             save_checkpoint(
-                model, optimizer, scheduler, epoch, val_metrics, ckpt_dir, arch=arch
+                base_model, optimizer, scheduler, epoch, val_metrics, ckpt_dir, arch=arch
             )
 
     # Final save
     save_checkpoint(
-        model, optimizer, scheduler, epochs - 1, val_metrics, ckpt_dir,
+        base_model, optimizer, scheduler, epochs - 1, val_metrics, ckpt_dir,
         tag="final", arch=arch,
     )
 
     # Final dashboard update
-    fp_emb, fp_labels = collect_fingerprints(model, val_loader, device)
-    cb_usage          = collect_codebook_usage(model)
+    fp_emb, fp_labels = collect_fingerprints(base_model, val_loader, device)
+    cb_usage          = collect_codebook_usage(base_model)
     sil = compute_silhouette(fp_emb, fp_labels) if len(fp_emb) > 0 else 0.0
     val_metrics["silhouette"] = sil
     dashboard.update(
@@ -323,7 +414,7 @@ def train(
     )
 
     # ── JSON log ──────────────────────────────────────────────────────────────
-    log_path = TRASH_DIR / f"train_log_{run_name}.json"
+    log_path = run_dir / f"train_log.json"
     with open(log_path, "w") as f:
         json.dump({
             "run_name":       run_name,
@@ -358,31 +449,49 @@ def parse_args():
     p.add_argument("--run_name",    type=str,   default="full")
     p.add_argument("--cell_lines",  nargs="+",  default=None,
                    help="Subset of cell lines to train on. Defaults to all 5.")
-    p.add_argument("--no_boundary",    action="store_true")
-    p.add_argument("--no_compartment", action="store_true")
     p.add_argument("--no_classifier",  action="store_true")
     p.add_argument("--no_masking",     action="store_true")
     p.add_argument("--no_film",        action="store_true")
-    p.add_argument("--n_codes",     type=int,   default=512)
-    p.add_argument("--plot_every",  type=int,   default=1,
+    from config import N_CODES as _DEFAULT_N_CODES
+    p.add_argument("--n_codes",       type=int,   default=_DEFAULT_N_CODES)
+    p.add_argument("--plot_every",    type=int,   default=1,
                    help="Update dashboard every N epochs (default=1)")
+    p.add_argument("--processed_dir", type=Path,  default=PROCESSED_DIR,
+                   help="Path to preprocessed .npz tile directory")
+    p.add_argument("--h5",            type=Path,  default=None,
+                   help="Path to combined tiles.h5 (from combine.py); overrides --processed_dir")
+    p.add_argument("--dat",           type=Path,  default=None,
+                   help="Path to tiles.dat memmap (from combine.py); fastest option, overrides --h5")
+    p.add_argument("--run_dir",        type=Path,  default=None,
+                   help="Run root directory; all outputs saved here (default: runs/<run_name>)")
+    p.add_argument("--ckpt_dir",      type=Path,  default=None,
+                   help="Checkpoint output directory (default: <run_dir>/checkpoints)")
+    p.add_argument("--plots_dir",     type=Path,  default=None,
+                   help="Dashboard/plots output directory (default: <run_dir>/plots)")
+    p.add_argument("--gpu_ids",       nargs="+",  type=int, default=None,
+                   help="GPU IDs for DataParallel, e.g. --gpu_ids 0 1 2 3 4 5 6 7")
     return p.parse_args()
 
 
 if __name__ == "__main__":
     args = parse_args()
     train(
-        cell_lines           = args.cell_lines,
-        epochs               = args.epochs,
-        batch_size           = args.batch_size,
-        lr                   = args.lr,
-        plot_every           = args.plot_every,
-        device_str           = args.device,
-        run_name             = args.run_name,
-        use_boundary_head    = not args.no_boundary,
-        use_compartment_head = not args.no_compartment,
-        use_classifier_head  = not args.no_classifier,
-        use_masking          = not args.no_masking,
-        use_film             = not args.no_film,
-        n_codes              = args.n_codes,
+        cell_lines          = args.cell_lines,
+        epochs              = args.epochs,
+        batch_size          = args.batch_size,
+        lr                  = args.lr,
+        plot_every          = args.plot_every,
+        device_str          = args.device,
+        run_name            = args.run_name,
+        run_dir             = args.run_dir,
+        processed_dir       = args.processed_dir,
+        h5_path             = args.h5,
+        dat_path            = args.dat,
+        ckpt_dir            = args.ckpt_dir,
+        plots_dir           = args.plots_dir,
+        gpu_ids             = args.gpu_ids,
+        use_classifier_head = not args.no_classifier,
+        use_masking         = not args.no_masking,
+        use_film            = not args.no_film,
+        n_codes             = args.n_codes,
     )

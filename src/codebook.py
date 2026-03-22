@@ -46,8 +46,9 @@ class EMAVectorQuantizer(nn.Module):
         self.register_buffer("codebook",    torch.randn(n_codes, code_dim))
         self.register_buffer("ema_count",   torch.ones(n_codes) * 1e-5)
         self.register_buffer("ema_sum",     torch.randn(n_codes, code_dim))
-        self.register_buffer("usage_count", torch.zeros(n_codes))
-        self.register_buffer("step",        torch.tensor(0, dtype=torch.long))
+        self.register_buffer("usage_count",      torch.zeros(n_codes))
+        self.register_buffer("epoch_usage_count", torch.zeros(n_codes))  # full-epoch accumulator
+        self.register_buffer("step",              torch.tensor(0, dtype=torch.long))
 
         # Normalise initial codebook
         with torch.no_grad():
@@ -113,7 +114,8 @@ class EMAVectorQuantizer(nn.Module):
         smoothed  = (self.ema_count + 1e-5) / (n + self.n_codes * 1e-5) * n
         self.codebook.data = self.ema_sum / smoothed.unsqueeze(-1)
 
-        self.usage_count += counts
+        self.usage_count       += counts
+        self.epoch_usage_count += counts
 
     # ── Dead Code Revival ──────────────────────────────────────────────────────
 
@@ -132,7 +134,7 @@ class EMAVectorQuantizer(nn.Module):
                 flat[perm] + torch.randn_like(flat[perm]) * 0.01
             )
             self.usage_count[dead] = float(self.dead_threshold)
-        self.usage_count.zero_()                             # reset for next interval
+        self.usage_count.zero_()          # reset for next revival interval (not epoch)
 
     # ── Fingerprint Extraction ─────────────────────────────────────────────────
 

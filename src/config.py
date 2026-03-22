@@ -21,17 +21,17 @@ from pathlib import Path
 _src_dir     = Path(__file__).resolve().parent
 PROJECT_ROOT = Path(os.environ.get("HIC_PROJECT_ROOT", str(_src_dir.parent)))
 SRC_DIR      = PROJECT_ROOT / "src"
-DATA_DIR     = Path("/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data")
+DATA_DIR        = Path(os.environ.get("HIC_DATA_DIR", "/data/joshi/Generative_experiment/Chromatin-CLI/data"))
 PROCESSED_DIR   = DATA_DIR / "processed"
 CHECKPOINTS_DIR = PROJECT_ROOT / "checkpoints"
-TRASH_DIR    = PROJECT_ROOT / "trash"
+TRASH_DIR       = Path(os.environ.get("HIC_TRASH_DIR", str(PROJECT_ROOT / "trash")))
 DOCS_DIR     = PROJECT_ROOT / "docs"
 PLOTS_DIR    = TRASH_DIR / "plots"
 
 # ─── Data directories ─────────────────────────────────────────────────────────
 # Override with HIC_MCOOL_DIR / HIC_CCRE_DIR env vars
-_default_mcool = "/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/downloads/mcool"
-_default_ccre  = "/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/downloads/ccre"
+_default_mcool = "/data/joshi/Generative_experiment/Chromatin-CLI/data/downloads/mcool"
+_default_ccre  = "/data/joshi/Generative_experiment/Chromatin-CLI/data/downloads/ccre"
 
 MCOOL_DIR = Path(os.environ.get("HIC_MCOOL_DIR", str(_default_mcool)))
 CCRE_DIR  = Path(os.environ.get("HIC_CCRE_DIR",  str(_default_ccre)))
@@ -41,7 +41,10 @@ CCRE_DIR  = Path(os.environ.get("HIC_CCRE_DIR",  str(_default_ccre)))
 #     str(DATA_DIR / "gencode.v45.basic.annotation.gtf.gz")
 # ))
 
-GENCODE_GTF_PATH = Path("/media/rudhra/ChenLabData1/Joshi/exp/Chromatin-CLI/data/gencode.v45.basic.annotation.gtf.gz")
+GENCODE_GTF_PATH = Path(os.environ.get(
+    "HIC_GENCODE_GTF",
+    str(DATA_DIR / "gencode.v45.basic.annotation.gtf.gz")
+))
 
 # DuckDB and FAISS paths
 DB_PATH    = DATA_DIR / "hic_fingerprints.duckdb"
@@ -154,8 +157,14 @@ RESOLUTION         = 100_000        # 100 kb bins
 TILE_SIZE          = 256            # 256×256 windows
 TILE_OVERLAP       = 0.5            # 50% overlap → step = 128 bins
 TILE_STEP          = int(TILE_SIZE * (1 - TILE_OVERLAP))   # 128
-INSULATION_WINDOW  = 500_000        # 500 kb diamond for insulation score
-MIN_VALID_FRAC     = 0.5            # skip tile if >50% NaN
+MIN_VALID_FRAC     = 0.2            # skip tile only if >80% bins are non-genomic
+
+# Cytoband filtering (auto-downloaded from UCSC if missing)
+CYTOBAND_PATH      = SRC_DIR / "data" / "cytoBand.hg38.txt"
+
+# Parallel preprocessing
+PREPROCESS_PARALLEL_SAMPLES = 4     # samples processed simultaneously
+PREPROCESS_WORKERS          = 8     # (informational) chromosome threads per sample
 
 # Chromosomes to process (autosomes + X)
 CHROMOSOMES = [
@@ -165,65 +174,57 @@ CHROMOSOMES = [
 ]
 
 # ─── Model Architecture ───────────────────────────────────────────────────────
-# Encoder
-ENCODER_CHANNELS   = [32, 64, 128, 256]   # stage output channels
+# Encoder — deeper for 355-sample / 67-class dataset
+ENCODER_CHANNELS   = [64, 128, 256, 512]   # scaled up from [32,64,128,256]
 ASSAY_EMBED_DIM    = 8
 
-# Codebook
-N_CODES            = 512
-CODE_DIM           = 256
-EMA_GAMMA          = 0.99
-DEAD_THRESHOLD     = 2
-REVIVAL_INTERVAL   = 100
+# Codebook — sized by sqrt(n_tiles)=266; 512 gives 138 tiles/code (dense, stable)
+N_CODES            = 512            # down from 2048; 70K tiles / 512 = 138 tiles/code
+CODE_DIM           = 512            # direct match to encoder output (no projection)
+EMA_GAMMA          = 0.995          # slower EMA = more stable codebook updates
+DEAD_THRESHOLD     = 1             # more aggressive dead-code detection
+REVIVAL_INTERVAL   = 50            # revive dead codes twice as often
 
 # Masker
 KEEP_RATIO         = 0.5            # keep 50% of 1024 tokens → 512 visible
 TAU_F_WARMUP       = 1.0
 TAU_F_FINAL        = 0.5            # hard floor — never go below 0.5 (prevents codebook collapse)
-TAU_F_WARMUP_EPOCHS  = 10
-TAU_F_ANNEAL_EPOCHS  = 30          # slow anneal over epochs 10–40 (was 20)
+TAU_F_WARMUP_EPOCHS  = 10           # shorter warmup; codebook needs less exploration with 512 codes
+TAU_F_ANNEAL_EPOCHS  = 40           # faster annealing to stabilize sooner
 
-# Transformer demasker
-N_TRANSFORMER_LAYERS = 4
+# Transformer demasker — wider/deeper
+N_TRANSFORMER_LAYERS = 6            # scaled up from 4
 N_HEADS              = 8
-FFN_DIM              = 1024
+FFN_DIM              = 2048         # scaled up from 1024
 SPATIAL_TOKENS       = 1024        # 32×32 = 1024
-DEMASKER_INNER_DIM   = 128         # project 256→128 inside demasker (cuts 3.1M→~800K)
+DEMASKER_INNER_DIM   = 256         # scaled up from 128
 
-# Decoder
-DECODER_CHANNELS   = [128, 64, 32]  # after the 256-channel demasker output
+# Decoder — matching wider encoder
+DECODER_CHANNELS   = [256, 128, 64]  # scaled up from [128,64,32]
 
 # Fingerprint projection
-FP_DIM             = 32            # 256 → 32
+FP_DIM             = 64            # scaled up from 32
 USE_ATTENTION_POOLING = False      # Use learned attention pooling instead of mean pooling
 
 # ─── Loss ─────────────────────────────────────────────────────────────────────
-POS_WEIGHT_BOUNDARY = 9.0          # boundary bins ≈ 5–10%
 LOSS_W_RECON        = 1.0
-LOSS_W_VQ           = 0.75          # RAISED: stronger pull to codebook, flattens commitment drift
-LOSS_W_BOUNDARY     = 0.0
-LOSS_W_COMPARTMENT  = 0.0
-LOSS_W_CLASSIFIER   = 1.0
-LOSS_W_REGION       = 1.0           # region classifier (chrom + bin): equal weight to cell classifier
-AUX_WARMUP_EPOCHS   = 5
-AUX_RAMP_EPOCHS     = 10
+LOSS_W_VQ           = 0.5           # slightly reduced; 512 codes converge faster
+LOSS_W_CLASSIFIER   = 5.0           # strong signal early; helps small datasets
 
-# ─── Classifier Heads ───────────────────────────────────────────────────────────────────
+# ─── Classifier Head ─────────────────────────────────────────────────────────
 # Computed at runtime from CELL_LINE_REGISTRY — set as a fallback default here
 N_CELL_TYPES        = 16           # updated dynamically in train.py
-# Region classifier: chromosome + coarse genomic bin
-N_CHROMS            = 23           # chr1–22 + chrX
-N_GENOMIC_BINS      = 30           # ~10 Mb coarse bins (genome ~3 Gb / 100 Mb = 30 bins)
 
 # ─── Training ─────────────────────────────────────────────────────────────────
-BATCH_SIZE         = 8
-NUM_EPOCHS         = 50
-LR                 = 1e-4
+BATCH_SIZE         = 32             # per-GPU; effective = 32×8 = 256 with DataParallel
+NUM_EPOCHS         = 300
+LR                 = 3e-4           # slightly higher to utilise larger batch
 BETAS              = (0.9, 0.999)
 WEIGHT_DECAY       = 0.05
 GRAD_CLIP          = 1.0
-WARMUP_STEPS       = 500
-NUM_WORKERS        = 4
+WARMUP_STEPS       = 2000           # longer warmup for 300 epochs
+MIN_STEPS_PER_EPOCH = 32            # batch cap guarantees at least this many grad steps
+NUM_WORKERS        = 16             # scaled up for 8-GPU machine
 SEED               = 42
 
 # ─── Ablation ─────────────────────────────────────────────────────────────────
@@ -235,4 +236,4 @@ TOP_K              = 5
 
 # ─── Logging ──────────────────────────────────────────────────────────────────
 LOG_EVERY_N_STEPS  = 10
-SAVE_EVERY_N_EPOCHS = 5
+SAVE_EVERY_N_EPOCHS = 10
